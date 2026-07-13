@@ -35,12 +35,16 @@ export async function POST(request: NextRequest) {
     storagePath = `templates/${targetId}/original.pdf`
   } else {
     const [contract] = await db
-      .select({ id: contracts.id })
+      .select({ id: contracts.id, status: contracts.status })
       .from(contracts)
       .where(and(eq(contracts.id, targetId), eq(contracts.createdBy, user.id)))
       .limit(1)
     if (!contract) {
       return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
+    }
+    // 送信後のPDF差し替えを禁止（署名対象文書の改変防止）
+    if (contract.status !== 'draft') {
+      return NextResponse.json({ error: '下書き状態の書類のみPDFを設定できます' }, { status: 409 })
     }
     storagePath = `contracts/${targetId}/original.pdf`
   }

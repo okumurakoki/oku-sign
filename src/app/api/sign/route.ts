@@ -9,6 +9,7 @@ import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail, sign
 import { downloadPdf, uploadSignedPdf } from '@/server/storage'
 import { generateSignedPdf } from '@/server/pdf/generate-signed-pdf'
 import { accessCodeMatches, isContractSignable, isExpired, isBlockedByOrder, allSignedExcept, nextLockState } from '@/lib/signing-rules'
+import { reportError } from '@/server/report-error'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
 
@@ -356,7 +357,7 @@ export async function POST(request: NextRequest) {
         await uploadSignedPdf(signedPdf, contract.id)
       } catch (err) {
         // PDF生成失敗でも締結は成立させる（監査ログに記録し後続で再生成可能に）
-        console.error(`[api/sign] 署名済みPDF生成失敗 contract=${contract.id}:`, err)
+        reportError(err, { scope: 'api/sign:signedPdf', contractId: contract.id })
         await db.insert(auditLogs).values({
           id: ulid(),
           contractId: signer.contractId,

@@ -4,6 +4,7 @@ import { getStripe, getStripeWebhookSecret } from '@/server/stripe'
 import { getDb } from '@/server/db'
 import { subscriptions, webhookEvents } from '@/server/db/schema'
 import { eq } from 'drizzle-orm'
+import { reportError } from '@/server/report-error'
 
 // 署名検証には生のbodyが必要
 export async function POST(request: NextRequest) {
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
     await handleEvent(db, event)
   } catch (err) {
     // 一時的失敗はclaimを解放してStripeにリトライさせる
-    console.error(`[webhook/stripe] 処理失敗 event=${event.type}:`, err)
+    reportError(err, { scope: 'webhook/stripe', eventType: event.type, eventId: event.id })
     await db.delete(webhookEvents).where(eq(webhookEvents.id, claimId)).catch(() => {})
     return NextResponse.json({ error: 'Processing failed' }, { status: 500 })
   }
