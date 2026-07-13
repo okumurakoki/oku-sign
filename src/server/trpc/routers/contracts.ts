@@ -6,6 +6,7 @@ import { z } from 'zod/v4'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signingRequestEmail, signerCompletedEmail, signerDeclinedEmail, reminderEmail } from '@/server/email/templates'
+import { getSignedUrl } from '@/server/storage'
 import type { Context } from '@/server/trpc/context'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
@@ -113,7 +114,17 @@ export const contractsRouter = router({
         .where(eq(auditLogs.contractId, input.id))
         .orderBy(desc(auditLogs.createdAt))
 
-      return { ...contract, signers: signerList, auditLogs: logs }
+      // PDFの署名付きURL（privateバケット・有効期限付き）を生成
+      let pdfSignedUrl: string | null = null
+      if (contract.pdfUrl) {
+        try {
+          pdfSignedUrl = await getSignedUrl(contract.pdfUrl)
+        } catch (err) {
+          console.error('[contracts.getById] PDF署名URL生成失敗:', err)
+        }
+      }
+
+      return { ...contract, signers: signerList, auditLogs: logs, pdfSignedUrl }
     }),
 
   create: protectedProcedure

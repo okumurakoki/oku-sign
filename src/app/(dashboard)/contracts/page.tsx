@@ -324,11 +324,11 @@ export default function ContractsPage() {
                                 送信を取り消す
                               </DropdownMenuItem>
                             )}
-                            {c.pdfUrl && (
+                            {c.pdfName && (
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem asChild>
-                                  <a href={c.pdfUrl} target="_blank" rel="noopener noreferrer">PDFを表示</a>
+                                  <a href={`/contracts/${c.id}`}>PDFを表示</a>
                                 </DropdownMenuItem>
                               </>
                             )}

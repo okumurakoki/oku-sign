@@ -206,8 +206,8 @@ export default function ContractDetailPage({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {c.status === 'completed' && c.pdfUrl && (
-            <a href={c.pdfUrl} target="_blank" rel="noopener noreferrer">
+          {c.status === 'completed' && c.pdfSignedUrl && (
+            <a href={c.pdfSignedUrl} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm">PDFをダウンロード</Button>
             </a>
           )}
@@ -417,9 +417,9 @@ export default function ContractDetailPage({
                       {c.pdfSize && (
                         <span className="text-[11px] text-muted-foreground">{formatBytes(c.pdfSize)}</span>
                       )}
-                      {c.pdfUrl && (
+                      {c.pdfSignedUrl && (
                         <a
-                          href={c.pdfUrl}
+                          href={c.pdfSignedUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[11px] text-primary hover:text-primary/80 transition-colors"

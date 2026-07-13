@@ -57,14 +57,8 @@ function NewContractForm() {
 
   const incrementUsage = trpc.templates.incrementUsage.useMutation()
 
-  const createContract = trpc.contracts.create.useMutation({
-    onSuccess: (data) => {
-      if (templateId) {
-        incrementUsage.mutate({ id: templateId })
-      }
-      router.push(`/contracts/${data.id}`)
-    },
-  })
+  const createContract = trpc.contracts.create.useMutation()
+  const updateContract = trpc.contracts.update.useMutation()
 
   const contacts = trpc.contacts.getAll.useQuery()
 
@@ -115,6 +109,7 @@ function NewContractForm() {
 
   const handleSubmit = async () => {
     setUploading(true)
+    setUploadError('')
     try {
       const validSigners = signers.filter((s) => s.name && s.email)
 
@@ -142,21 +137,26 @@ function NewContractForm() {
           body: formData,
         })
 
-        if (uploadRes.ok) {
-          const uploadData = await uploadRes.json()
-          await fetch('/api/trpc/contracts.update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: result.id,
-              pdfUrl: uploadData.url,
-              pdfName: uploadData.name,
-              pdfSize: uploadData.size,
-            }),
-          })
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => ({}))
+          throw new Error(err.error ?? 'PDFのアップロードに失敗しました')
         }
+
+        const uploadData = await uploadRes.json()
+        await updateContract.mutateAsync({
+          id: result.id,
+          pdfUrl: uploadData.path,
+          pdfName: uploadData.name,
+          pdfSize: uploadData.size,
+        })
       }
-    } finally {
+
+      if (templateId) {
+        incrementUsage.mutate({ id: templateId })
+      }
+      router.push(`/contracts/${result.id}`)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : '書類の作成に失敗しました')
       setUploading(false)
     }
   }

@@ -1,6 +1,7 @@
 import { getDb } from '@/server/db'
 import { contractSigners, contracts, users } from '@/server/db/schema'
 import { eq } from 'drizzle-orm'
+import { getSignedUrl } from '@/server/storage'
 import { SigningView } from './signing-view'
 
 export default async function SignPage({
@@ -112,12 +113,22 @@ export default async function SignPage({
     .where(eq(users.id, contract.createdBy))
     .limit(1)
 
+  // 契約PDFの署名付きURL（privateバケット・有効期限付き）を生成
+  let pdfSignedUrl: string | null = null
+  if (contract.pdfUrl) {
+    try {
+      pdfSignedUrl = await getSignedUrl(contract.pdfUrl)
+    } catch (err) {
+      console.error('[sign] PDF署名URL生成失敗:', err)
+    }
+  }
+
   return (
     <SigningView
       token={token}
       signerName={signer.name}
       contractTitle={contract.title}
-      pdfUrl={contract.pdfUrl}
+      pdfUrl={pdfSignedUrl}
       senderName={sender?.name ?? null}
       senderCompany={sender?.companyName ?? null}
       message={contract.message}

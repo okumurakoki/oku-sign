@@ -53,13 +53,14 @@ export default function TemplatesPage() {
         setUploading(true)
         const formData = new FormData()
         formData.append('file', pdfFile)
-        formData.append('contractId', `template-${data.id}`)
+        formData.append('kind', 'template')
+        formData.append('targetId', data.id)
         const res = await fetch('/api/upload', { method: 'POST', body: formData })
         if (res.ok) {
           const uploadData = await res.json()
           await updateTemplate.mutateAsync({
             id: data.id,
-            pdfUrl: uploadData.url,
+            pdfUrl: uploadData.path,
             pdfName: uploadData.name,
             pdfSize: uploadData.size,
           })

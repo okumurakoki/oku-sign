@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/server/auth'
 import { getDb } from '@/server/db'
-import { contracts } from '@/server/db/schema'
+import { contracts, templates } from '@/server/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { uploadPdf } from '@/server/storage'
+import { uploadPdfToPath } from '@/server/storage'
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser()
@@ -13,21 +13,36 @@ export async function POST(request: NextRequest) {
 
   const formData = await request.formData()
   const file = formData.get('file') as File | null
-  const contractId = formData.get('contractId') as string | null
+  const kind = (formData.get('kind') as string | null) ?? 'contract'
+  const targetId = (formData.get('targetId') ?? formData.get('contractId')) as string | null
 
-  if (!file || !contractId) {
-    return NextResponse.json({ error: 'Missing file or contractId' }, { status: 400 })
+  if (!file || !targetId) {
+    return NextResponse.json({ error: 'Missing file or targetId' }, { status: 400 })
   }
 
-  // アップロード先契約の所有者のみ許可
+  // アップロード先リソースの所有者のみ許可
   const db = getDb()
-  const [contract] = await db
-    .select({ id: contracts.id })
-    .from(contracts)
-    .where(and(eq(contracts.id, contractId), eq(contracts.createdBy, user.id)))
-    .limit(1)
-  if (!contract) {
-    return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
+  let storagePath: string
+  if (kind === 'template') {
+    const [tpl] = await db
+      .select({ id: templates.id })
+      .from(templates)
+      .where(and(eq(templates.id, targetId), eq(templates.createdBy, user.id)))
+      .limit(1)
+    if (!tpl) {
+      return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+    }
+    storagePath = `templates/${targetId}/original.pdf`
+  } else {
+    const [contract] = await db
+      .select({ id: contracts.id })
+      .from(contracts)
+      .where(and(eq(contracts.id, targetId), eq(contracts.createdBy, user.id)))
+      .limit(1)
+    if (!contract) {
+      return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
+    }
+    storagePath = `contracts/${targetId}/original.pdf`
   }
 
   if (file.type !== 'application/pdf') {
@@ -39,10 +54,10 @@ export async function POST(request: NextRequest) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer())
-  const url = await uploadPdf(buffer, file.name, contractId)
+  const path = await uploadPdfToPath(buffer, storagePath)
 
   return NextResponse.json({
-    url,
+    path,
     name: file.name,
     size: file.size,
   })
