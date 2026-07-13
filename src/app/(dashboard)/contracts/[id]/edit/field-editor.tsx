@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { PdfPageCanvas } from '@/components/pdf/pdf-page-canvas'
 import { signerColor } from '@/lib/signer-colors'
@@ -24,18 +23,35 @@ interface EditorField {
   required: boolean
 }
 
-interface Signer {
+export interface SaveField {
+  signerId: string
+  fieldType: FieldType
+  label: string | null
+  page: number
+  x: number
+  y: number
+  width: number
+  height: number
+  required: boolean
+}
+
+// 契約=実際の署名者、テンプレ=署名者スロット。id/name/order を持つ汎用の割当先。
+interface Assignee {
   id: string
   name: string
-  email: string
+  email?: string
   signOrder: number
 }
 
 interface Props {
-  contractId: string
   pdfUrl: string
-  signers: Signer[]
+  signers: Assignee[]
   initialFields: EditorField[]
+  onSave: (fields: SaveField[]) => Promise<void>
+  saving: boolean
+  saveError?: string | null
+  backHref: string
+  assigneeLabel?: string // '署名者' | '署名者スロット' など
 }
 
 const DEFAULT_SIZE: Record<FieldType, { width: number; height: number }> = {
@@ -52,7 +68,7 @@ const FIELD_META: Record<FieldType, { label: string; icon: typeof PenLine }> = {
   stamp: { label: '印鑑', icon: Stamp },
 }
 
-export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Props) {
+export function FieldEditor({ pdfUrl, signers, initialFields, onSave, saving, saveError, backHref, assigneeLabel = '署名者' }: Props) {
   const router = useRouter()
   const [fields, setFields] = useState<EditorField[]>(initialFields)
   const [activeSignerId, setActiveSignerId] = useState<string>(signers[0]?.id ?? '')
@@ -76,13 +92,6 @@ export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Prop
     (id: string) => signers.findIndex((s) => s.id === id),
     [signers],
   )
-
-  const bulkSet = trpc.signatureFields.bulkSet.useMutation({
-    onSuccess: () => {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
-    },
-  })
 
   const uid = () => crypto.randomUUID()
 
@@ -166,13 +175,12 @@ export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Prop
     if (selectedKey === key) setSelectedKey(null)
   }
 
-  const handleSave = () => {
-    bulkSet.mutate({
-      contractId,
-      fields: fields.map((f) => ({
+  const handleSave = async () => {
+    await onSave(
+      fields.map((f) => ({
         signerId: f.signerId,
         fieldType: f.fieldType,
-        label: f.label ?? undefined,
+        label: f.label,
         page: f.page,
         x: f.x,
         y: f.y,
@@ -180,7 +188,9 @@ export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Prop
         height: f.height,
         required: f.required,
       })),
-    })
+    )
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
   }
 
   const fieldsWithoutSigner = fields.filter((f) => !signers.some((s) => s.id === f.signerId))
@@ -253,7 +263,7 @@ export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Prop
       {/* Sidebar */}
       <div className="w-72 shrink-0 space-y-5">
         <div className="rounded-lg border bg-card p-4">
-          <p className="text-xs font-medium text-muted-foreground mb-2">署名者を選択</p>
+          <p className="text-xs font-medium text-muted-foreground mb-2">{assigneeLabel}を選択</p>
           <div className="space-y-1.5">
             {signers.map((s, i) => {
               const color = signerColor(i)
@@ -316,16 +326,16 @@ export function FieldEditor({ contractId, pdfUrl, signers, initialFields }: Prop
             <span className="text-muted-foreground">配置済みの欄</span>
             <span className="font-medium">{fields.length}</span>
           </div>
-          {bulkSet.error && (
-            <p className="text-xs text-red-600">{bulkSet.error.message}</p>
+          {saveError && (
+            <p className="text-xs text-red-600">{saveError}</p>
           )}
           {saved && <p className="text-xs text-emerald-600">保存しました</p>}
           <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => router.push(`/contracts/${contractId}`)}>
+            <Button variant="outline" className="flex-1" onClick={() => router.push(backHref)}>
               戻る
             </Button>
-            <Button className="flex-1" onClick={handleSave} disabled={bulkSet.isPending}>
-              {bulkSet.isPending ? '保存中...' : '保存'}
+            <Button className="flex-1" onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
             </Button>
           </div>
         </div>

@@ -3,6 +3,7 @@ import { templates } from '@/server/db/schema'
 import { and, eq, desc, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
+import { getSignedUrl } from '@/server/storage'
 
 export const templatesRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -21,7 +22,17 @@ export const templatesRouter = router({
         .from(templates)
         .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
         .limit(1)
-      return template ?? null
+      if (!template) return null
+
+      let pdfSignedUrl: string | null = null
+      if (template.pdfUrl) {
+        try {
+          pdfSignedUrl = await getSignedUrl(template.pdfUrl)
+        } catch (err) {
+          console.error('[templates.getById] PDF署名URL生成失敗:', err)
+        }
+      }
+      return { ...template, pdfSignedUrl }
     }),
 
   create: protectedProcedure

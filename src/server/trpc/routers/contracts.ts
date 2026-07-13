@@ -1,12 +1,12 @@
 import { protectedProcedure, router } from '@/server/trpc'
 import { TRPCError } from '@trpc/server'
-import { contracts, contractSigners, auditLogs, users, signatures, signatureFields } from '@/server/db/schema'
+import { contracts, contractSigners, auditLogs, signatureFields, templates } from '@/server/db/schema'
 import { eq, desc, and, like, count, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
-import { signingRequestEmail, signerCompletedEmail, signerDeclinedEmail, reminderEmail } from '@/server/email/templates'
-import { getSignedUrl } from '@/server/storage'
+import { signingRequestEmail, reminderEmail } from '@/server/email/templates'
+import { getSignedUrl, downloadPdf, uploadPdfToPath } from '@/server/storage'
 import { hasActiveSubscription } from './billing'
 import type { Context } from '@/server/trpc/context'
 
@@ -208,6 +208,106 @@ export const contractsRouter = router({
       return { id: contractId }
     }),
 
+  // テンプレートから契約を作成（PDF・署名欄をコピー）
+  createFromTemplate: protectedProcedure
+    .input(z.object({
+      templateId: z.string(),
+      title: z.string().min(1).optional(),
+      expiresAt: z.string().optional(),
+      signers: z.array(z.object({
+        email: z.string().email(),
+        name: z.string().min(1),
+        signOrder: z.number().int().min(1),
+        accessCode: z.string().optional(),
+      })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const allowed = await hasActiveSubscription(ctx.db, ctx.user)
+      if (!allowed) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'パートナープランへの登録が必要です', cause: 'SUBSCRIPTION_REQUIRED' })
+      }
+
+      const [tpl] = await ctx.db
+        .select()
+        .from(templates)
+        .where(and(eq(templates.id, input.templateId), eq(templates.createdBy, ctx.user.id)))
+        .limit(1)
+      if (!tpl) throw new TRPCError({ code: 'NOT_FOUND', message: 'テンプレートが見つかりません' })
+
+      const contractId = ulid()
+      let pdfUrl: string | null = null
+      // テンプレPDFを新契約のストレージにコピー
+      if (tpl.pdfUrl) {
+        try {
+          const buf = await downloadPdf(tpl.pdfUrl)
+          pdfUrl = await uploadPdfToPath(buf, `contracts/${contractId}/original.pdf`)
+        } catch (err) {
+          console.error('[createFromTemplate] PDFコピー失敗:', err)
+        }
+      }
+
+      await ctx.db.insert(contracts).values({
+        id: contractId,
+        title: input.title ?? tpl.title,
+        pdfUrl,
+        pdfName: tpl.pdfName,
+        pdfSize: tpl.pdfSize,
+        message: tpl.defaultMessage,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+        createdBy: ctx.user.id,
+      })
+
+      // 署名者を作成し、signOrder → signerId のマップを作る
+      const signerRows = input.signers.map((s) => ({
+        id: ulid(),
+        contractId,
+        email: s.email,
+        name: s.name,
+        signOrder: s.signOrder,
+        role: 'signer' as const,
+        token: ulid(),
+        accessCode: s.accessCode || null,
+      }))
+      await ctx.db.insert(contractSigners).values(signerRows)
+      const orderToSigner = new Map(signerRows.map((s) => [s.signOrder, s.id]))
+
+      // テンプレの署名欄をコピー（signerOrderスロット → 実signer）
+      const tplFields = await ctx.db
+        .select()
+        .from(signatureFields)
+        .where(eq(signatureFields.templateId, tpl.id))
+      if (tplFields.length > 0) {
+        await ctx.db.insert(signatureFields).values(
+          tplFields.map((f) => ({
+            id: ulid(),
+            contractId,
+            signerId: orderToSigner.get(f.signerOrder) ?? null,
+            signerOrder: f.signerOrder,
+            fieldType: f.fieldType,
+            label: f.label,
+            page: f.page,
+            x: f.x, y: f.y, width: f.width, height: f.height,
+            required: f.required,
+          })),
+        )
+      }
+
+      await ctx.db
+        .update(templates)
+        .set({ usageCount: sql`${templates.usageCount} + 1` })
+        .where(eq(templates.id, tpl.id))
+
+      await ctx.db.insert(auditLogs).values({
+        id: ulid(),
+        contractId,
+        action: 'created',
+        actorEmail: ctx.user.email,
+        detail: `テンプレート「${tpl.title}」から書類を作成しました`,
+      })
+
+      return { id: contractId }
+    }),
+
   update: protectedProcedure
     .input(z.object({
       id: z.string(),
@@ -257,22 +357,26 @@ export const contractsRouter = router({
         throw new Error('署名者が設定されていません')
       }
 
-      // Send emails to signers
-      for (const signer of signerList) {
-        const signUrl = `${BASE_URL}/sign/${signer.token}`
-        const emailData = signingRequestEmail({
-          signerName: signer.name,
-          senderName: ctx.user.name,
-          senderCompany: ctx.user.companyName,
-          contractTitle: contract.title,
-          signUrl,
-          message: contract.message,
-          expiresAt: contract.expiresAt,
-        })
-        await sendEmail({ to: signer.email, ...emailData })
-      }
+      // 順次署名: 最初の順序の署名者のみに通知する（完了時に次の署名者へ自動通知）
+      const firstSigner = signerList[0]
+      const signUrl = `${BASE_URL}/sign/${firstSigner.token}`
+      const emailData = signingRequestEmail({
+        signerName: firstSigner.name,
+        senderName: ctx.user.name,
+        senderCompany: ctx.user.companyName,
+        contractTitle: contract.title,
+        signUrl,
+        message: contract.message,
+        expiresAt: contract.expiresAt,
+      })
+      await sendEmail({ to: firstSigner.email, ...emailData })
 
       const now = new Date()
+      await ctx.db
+        .update(contractSigners)
+        .set({ status: 'notified' })
+        .where(eq(contractSigners.id, firstSigner.id))
+
       await ctx.db
         .update(contracts)
         .set({ status: 'sent', sentAt: now, updatedAt: now })
@@ -283,7 +387,7 @@ export const contractsRouter = router({
         contractId: input.id,
         action: 'sent',
         actorEmail: ctx.user.email,
-        detail: `${signerList.length}名に署名依頼を送信しました`,
+        detail: `${firstSigner.name}に署名依頼を送信しました（署名者${signerList.length}名・順次）`,
       })
     }),
 
@@ -417,7 +521,8 @@ export const contractsRouter = router({
         ))
         .limit(1)
 
-      if (!signer || signer.status !== 'pending') return
+      // 未署名（notified/viewed）のみリマインド可
+      if (!signer || (signer.status !== 'notified' && signer.status !== 'viewed')) return
 
       const signUrl = `${BASE_URL}/sign/${signer.token}`
       const emailData = reminderEmail({

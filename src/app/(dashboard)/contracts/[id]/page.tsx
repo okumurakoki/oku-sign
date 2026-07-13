@@ -42,7 +42,8 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   completed: { label: '締結済み', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   cancelled: { label: '却下', className: 'bg-red-50 text-red-600 border-red-200' },
   expired: { label: '期限切れ', className: 'bg-red-50 text-red-600 border-red-200' },
-  pending: { label: '未署名', className: 'bg-gray-100 text-gray-500 border-gray-200' },
+  pending: { label: '未送信', className: 'bg-gray-100 text-gray-500 border-gray-200' },
+  notified: { label: '送信済み', className: 'bg-blue-50 text-blue-700 border-blue-200' },
   viewed: { label: '閲覧済み', className: 'bg-sky-50 text-sky-700 border-sky-200' },
   signed: { label: '署名済み', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   declined: { label: '辞退', className: 'bg-red-50 text-red-600 border-red-200' },
@@ -59,6 +60,8 @@ const actionLabels: Record<string, string> = {
   signer_added: '署名者追加',
   signer_removed: '署名者削除',
   viewed: '閲覧',
+  notified: '通知',
+  expired: '期限切れ',
 }
 
 function formatBytes(bytes: number) {

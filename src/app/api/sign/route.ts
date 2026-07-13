@@ -6,7 +6,7 @@ import { contractSigners, signatures, signatureFields, auditLogs, contracts, use
 import { and, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
-import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail } from '@/server/email/templates'
+import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail, signingRequestEmail } from '@/server/email/templates'
 import { downloadPdf, uploadSignedPdf } from '@/server/storage'
 import { generateSignedPdf } from '@/server/pdf/generate-signed-pdf'
 
@@ -226,6 +226,38 @@ export async function POST(request: NextRequest) {
       allCompleted: allSigned,
     })
     await sendEmail({ to: sender.email, ...emailData })
+  }
+
+  // 順次署名: 未完了なら次順序の署名者へ自動通知
+  if (!allSigned) {
+    const nextSigner = allSigners
+      .filter((s) => s.status !== 'signed' && s.status !== 'declined' && s.id !== signer.id)
+      .sort((a, b) => a.signOrder - b.signOrder)[0]
+    if (nextSigner && nextSigner.status === 'pending') {
+      const signUrl = `${BASE_URL}/sign/${nextSigner.token}`
+      const emailData = signingRequestEmail({
+        signerName: nextSigner.name,
+        senderName: sender?.name ?? '',
+        senderCompany: sender?.companyName ?? null,
+        contractTitle: contract.title,
+        signUrl,
+        message: contract.message,
+        expiresAt: contract.expiresAt,
+      })
+      await sendEmail({ to: nextSigner.email, ...emailData })
+      await db
+        .update(contractSigners)
+        .set({ status: 'notified' })
+        .where(eq(contractSigners.id, nextSigner.id))
+      await db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: signer.contractId,
+        action: 'notified',
+        actorEmail: 'system',
+        detail: `${nextSigner.name}に署名依頼を送信しました（順次）`,
+        createdAt: new Date(),
+      })
+    }
   }
 
   if (allSigned) {

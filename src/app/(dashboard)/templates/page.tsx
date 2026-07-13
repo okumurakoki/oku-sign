@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -190,6 +191,11 @@ export default function TemplatesPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {t.pdfName && (
+                            <DropdownMenuItem asChild>
+                              <Link href={`/templates/${t.id}/edit`}>署名欄を配置</Link>
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => duplicateTemplate.mutate({ id: t.id })}>
                             複製
                           </DropdownMenuItem>

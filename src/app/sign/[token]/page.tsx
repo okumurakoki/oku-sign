@@ -50,8 +50,8 @@ export default async function SignPage({
     )
   }
 
-  // Record view if first time
-  if (signer.status === 'pending' && !signer.viewedAt) {
+  // Record view if first time（pending/notified の初回アクセスで viewed に）
+  if ((signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
     await db
       .update(contractSigners)
       .set({ status: 'viewed', viewedAt: new Date() })

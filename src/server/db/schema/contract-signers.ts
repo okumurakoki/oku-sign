@@ -9,7 +9,7 @@ export const contractSigners = pgTable('contract_signers', {
   role: text('role', { enum: ['sender', 'signer'] }).notNull().default('signer'),
   signOrder: integer('sign_order').notNull().default(1),
   status: text('status', {
-    enum: ['pending', 'viewed', 'signed', 'declined'],
+    enum: ['pending', 'notified', 'viewed', 'signed', 'declined'],
   }).notNull().default('pending'),
   token: text('token').unique(),
   accessCode: text('access_code'),

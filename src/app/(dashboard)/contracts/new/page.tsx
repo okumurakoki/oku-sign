@@ -55,9 +55,8 @@ function NewContractForm() {
     }
   }, [template.data, templateLoaded])
 
-  const incrementUsage = trpc.templates.incrementUsage.useMutation()
-
   const createContract = trpc.contracts.create.useMutation()
+  const createFromTemplate = trpc.contracts.createFromTemplate.useMutation()
   const updateContract = trpc.contracts.update.useMutation()
 
   const contacts = trpc.contacts.getAll.useQuery()
@@ -113,6 +112,23 @@ function NewContractForm() {
     try {
       const validSigners = signers.filter((s) => s.name && s.email)
 
+      // テンプレートから作成: PDF・署名欄をサーバーでコピー
+      if (templateId) {
+        const result = await createFromTemplate.mutateAsync({
+          templateId,
+          title,
+          expiresAt: expiresAt || undefined,
+          signers: validSigners.map((s) => ({
+            email: s.email,
+            name: s.name,
+            signOrder: s.signOrder,
+            accessCode: s.accessCode || undefined,
+          })),
+        })
+        router.push(`/contracts/${result.id}`)
+        return
+      }
+
       const result = await createContract.mutateAsync({
         title,
         message: message || undefined,
@@ -151,9 +167,6 @@ function NewContractForm() {
         })
       }
 
-      if (templateId) {
-        incrementUsage.mutate({ id: templateId })
-      }
       router.push(`/contracts/${result.id}`)
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : '書類の作成に失敗しました')

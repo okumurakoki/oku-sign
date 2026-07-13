@@ -13,6 +13,7 @@ export default function EditFieldsPage({
 }) {
   const { id } = use(params)
   const contract = trpc.contracts.getById.useQuery({ id })
+  const bulkSet = trpc.signatureFields.bulkSet.useMutation()
 
   if (contract.isLoading) {
     return <div className="py-20 text-center text-sm text-muted-foreground">読み込み中...</div>
@@ -59,7 +60,6 @@ export default function EditFieldsPage({
       </div>
 
       <FieldEditor
-        contractId={id}
         pdfUrl={c.pdfSignedUrl}
         signers={c.signers.map((s) => ({ id: s.id, name: s.name, email: s.email, signOrder: s.signOrder }))}
         initialFields={c.fields.map((f) => ({
@@ -75,6 +75,15 @@ export default function EditFieldsPage({
           height: f.height,
           required: f.required,
         }))}
+        backHref={`/contracts/${id}`}
+        saving={bulkSet.isPending}
+        saveError={bulkSet.error?.message ?? null}
+        onSave={async (fields) => {
+          await bulkSet.mutateAsync({
+            contractId: id,
+            fields: fields.map((f) => ({ ...f, label: f.label ?? undefined })),
+          })
+        }}
       />
     </div>
   )
