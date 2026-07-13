@@ -1,12 +1,31 @@
 import { protectedProcedure, router } from '@/server/trpc'
+import { TRPCError } from '@trpc/server'
 import { contracts, contractSigners, auditLogs, users, signatures } from '@/server/db/schema'
 import { eq, desc, and, like, count, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signingRequestEmail, signerCompletedEmail, signerDeclinedEmail, reminderEmail } from '@/server/email/templates'
+import type { Context } from '@/server/trpc/context'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
+
+// 契約が呼び出しユーザーの所有物であることを保証（無ければNOT_FOUND）
+async function assertContractOwner(
+  db: Context['db'],
+  contractId: string,
+  userId: string,
+) {
+  const [contract] = await db
+    .select()
+    .from(contracts)
+    .where(and(eq(contracts.id, contractId), eq(contracts.createdBy, userId)))
+    .limit(1)
+  if (!contract) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: '書類が見つかりません' })
+  }
+  return contract
+}
 
 export const contractsRouter = router({
   list: protectedProcedure
@@ -277,6 +296,11 @@ export const contractsRouter = router({
       signOrder: z.number().int().min(1),
     }))
     .mutation(async ({ ctx, input }) => {
+      const contract = await assertContractOwner(ctx.db, input.contractId, ctx.user.id)
+      if (contract.status !== 'draft') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '下書き状態の書類のみ署名者を追加できます' })
+      }
+
       const id = ulid()
       await ctx.db.insert(contractSigners).values({
         id,
@@ -302,11 +326,22 @@ export const contractsRouter = router({
   removeSigner: protectedProcedure
     .input(z.object({ signerId: z.string(), contractId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      const contract = await assertContractOwner(ctx.db, input.contractId, ctx.user.id)
+      if (contract.status !== 'draft') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '下書き状態の書類のみ署名者を削除できます' })
+      }
+
       const [signer] = await ctx.db
         .select()
         .from(contractSigners)
-        .where(eq(contractSigners.id, input.signerId))
+        .where(and(
+          eq(contractSigners.id, input.signerId),
+          eq(contractSigners.contractId, input.contractId),
+        ))
         .limit(1)
+      if (!signer) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: '署名者が見つかりません' })
+      }
 
       await ctx.db
         .delete(contractSigners)
@@ -326,19 +361,18 @@ export const contractsRouter = router({
   sendReminder: protectedProcedure
     .input(z.object({ contractId: z.string(), signerId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const [contract] = await ctx.db
-        .select()
-        .from(contracts)
-        .where(eq(contracts.id, input.contractId))
-        .limit(1)
+      const contract = await assertContractOwner(ctx.db, input.contractId, ctx.user.id)
 
       const [signer] = await ctx.db
         .select()
         .from(contractSigners)
-        .where(eq(contractSigners.id, input.signerId))
+        .where(and(
+          eq(contractSigners.id, input.signerId),
+          eq(contractSigners.contractId, input.contractId),
+        ))
         .limit(1)
 
-      if (!contract || !signer || signer.status !== 'pending') return
+      if (!signer || signer.status !== 'pending') return
 
       const signUrl = `${BASE_URL}/sign/${signer.token}`
       const emailData = reminderEmail({

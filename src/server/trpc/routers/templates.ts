@@ -1,6 +1,6 @@
 import { protectedProcedure, router } from '@/server/trpc'
 import { templates } from '@/server/db/schema'
-import { eq, desc, sql } from 'drizzle-orm'
+import { and, eq, desc, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
 
@@ -19,7 +19,7 @@ export const templatesRouter = router({
       const [template] = await ctx.db
         .select()
         .from(templates)
-        .where(eq(templates.id, input.id))
+        .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
         .limit(1)
       return template ?? null
     }),
@@ -71,7 +71,7 @@ export const templatesRouter = router({
       await ctx.db
         .update(templates)
         .set(updateData)
-        .where(eq(templates.id, id))
+        .where(and(eq(templates.id, id), eq(templates.createdBy, ctx.user.id)))
     }),
 
   duplicate: protectedProcedure
@@ -80,7 +80,7 @@ export const templatesRouter = router({
       const [original] = await ctx.db
         .select()
         .from(templates)
-        .where(eq(templates.id, input.id))
+        .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
         .limit(1)
 
       if (!original) throw new Error('テンプレートが見つかりません')
@@ -105,7 +105,7 @@ export const templatesRouter = router({
       await ctx.db
         .update(templates)
         .set({ usageCount: sql`${templates.usageCount} + 1` })
-        .where(eq(templates.id, input.id))
+        .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
     }),
 
   delete: protectedProcedure
@@ -113,6 +113,6 @@ export const templatesRouter = router({
     .mutation(async ({ ctx, input }) => {
       await ctx.db
         .delete(templates)
-        .where(eq(templates.id, input.id))
+        .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
     }),
 })

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/server/auth'
+import { getDb } from '@/server/db'
+import { contracts } from '@/server/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { uploadPdf } from '@/server/storage'
 
 export async function POST(request: NextRequest) {
@@ -14,6 +17,17 @@ export async function POST(request: NextRequest) {
 
   if (!file || !contractId) {
     return NextResponse.json({ error: 'Missing file or contractId' }, { status: 400 })
+  }
+
+  // アップロード先契約の所有者のみ許可
+  const db = getDb()
+  const [contract] = await db
+    .select({ id: contracts.id })
+    .from(contracts)
+    .where(and(eq(contracts.id, contractId), eq(contracts.createdBy, user.id)))
+    .limit(1)
+  if (!contract) {
+    return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
   }
 
   if (file.type !== 'application/pdf') {
