@@ -15,6 +15,13 @@
       "when": 1783932298333,
       "tag": "0001_light_landau",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783933126741,
+      "tag": "0002_flippant_archangel",
+      "breakpoints": true
     }
   ]
 }

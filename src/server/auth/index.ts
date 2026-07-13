@@ -39,6 +39,7 @@ export async function getCurrentUser() {
       name: 'Dev User',
       companyName: 'oku-sign Dev',
       role: 'admin' as const,
+      isOwner: true, // 開発ユーザーは課金不要
       createdAt: new Date(),
     }
     await db.insert(users).values(newUser).onConflictDoNothing()
@@ -61,6 +62,7 @@ export async function getCurrentUser() {
     name: authUser.user_metadata?.name ?? authUser.email!.split('@')[0],
     companyName: authUser.user_metadata?.company_name ?? null,
     role: 'admin' as const,
+    isOwner: false,
     createdAt: new Date(),
   }
   await db.insert(users).values(newUser)

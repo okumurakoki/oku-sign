@@ -1,0 +1,141 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { Elements } from '@stripe/react-stripe-js'
+import { trpc } from '@/lib/trpc'
+import { getStripeJs, getStripeMode, isStripeConfigured } from '@/lib/stripe-client'
+import { Button } from '@/components/ui/button'
+import { CheckoutForm } from './checkout-form'
+import { Check } from 'lucide-react'
+
+const stripePromise = getStripeJs()
+
+export default function BillingPage() {
+  const stripeConfigured = isStripeConfigured()
+  const utils = trpc.useUtils()
+  const sub = trpc.billing.getSubscription.useQuery()
+  const [clientSecret, setClientSecret] = useState<string | null>(null)
+
+  const createSub = trpc.billing.createSubscription.useMutation({
+    onSuccess: (data) => setClientSecret(data.clientSecret),
+  })
+  const cancelSub = trpc.billing.cancelSubscription.useMutation({
+    onSuccess: () => utils.billing.getSubscription.invalidate(),
+  })
+  const resumeSub = trpc.billing.resumeSubscription.useMutation({
+    onSuccess: () => utils.billing.getSubscription.invalidate(),
+  })
+
+  const handlePaid = () => {
+    setClientSecret(null)
+    // webhook反映まで少し待ってから再取得
+    setTimeout(() => utils.billing.getSubscription.invalidate(), 1500)
+  }
+
+  if (sub.isLoading) {
+    return <div className="py-20 text-center text-sm text-muted-foreground">読み込み中...</div>
+  }
+  const s = sub.data
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <Link href="/settings" className="text-xs text-muted-foreground hover:text-foreground">← 設定に戻る</Link>
+        <h1 className="mt-1 text-lg font-semibold">プラン・お支払い</h1>
+      </div>
+
+      {getStripeMode() !== 'live' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2">
+          <p className="text-xs text-amber-800">テストモード（実際の請求は発生しません）</p>
+        </div>
+      )}
+
+      {/* オーナー（自社利用・無料） */}
+      {s?.isOwner ? (
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center gap-2">
+            <Check className="text-emerald-600" size={18} />
+            <p className="text-sm font-medium">自社利用プラン（無料）</p>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">オーナーアカウントは課金なしで全機能を利用できます。</p>
+        </div>
+      ) : s?.active ? (
+        /* 契約中 */
+        <div className="rounded-lg border bg-card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Check className="text-emerald-600" size={18} />
+                <p className="text-sm font-medium">{s.plan.name}</p>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">月額 ¥{s.plan.amount.toLocaleString()}</p>
+            </div>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700 border border-emerald-200">
+              利用中
+            </span>
+          </div>
+
+          {s.currentPeriodEnd && (
+            <p className="text-sm text-muted-foreground">
+              {s.cancelAtPeriodEnd
+                ? `${new Date(s.currentPeriodEnd).toLocaleDateString('ja-JP')} に解約予定`
+                : `次回更新日: ${new Date(s.currentPeriodEnd).toLocaleDateString('ja-JP')}`}
+            </p>
+          )}
+
+          {s.cancelAtPeriodEnd ? (
+            <Button variant="outline" onClick={() => resumeSub.mutate()} disabled={resumeSub.isPending}>
+              {resumeSub.isPending ? '処理中...' : '解約を取り消す（継続する）'}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => cancelSub.mutate()}
+              disabled={cancelSub.isPending}
+            >
+              {cancelSub.isPending ? '処理中...' : '解約する'}
+            </Button>
+          )}
+        </div>
+      ) : (
+        /* 未加入 → 登録フロー */
+        <div className="rounded-lg border bg-card p-6 space-y-5">
+          <div>
+            <p className="text-sm font-medium">{s?.plan.name ?? 'パートナープラン'}</p>
+            <p className="mt-1 text-2xl font-semibold">¥{(s?.plan.amount ?? 2980).toLocaleString()}<span className="text-sm font-normal text-muted-foreground"> / 月</span></p>
+            <ul className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 電子契約の送信無制限</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 署名欄の自由配置・テンプレート</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 監査証跡・署名済みPDF</li>
+            </ul>
+          </div>
+
+          {s?.status === 'past_due' && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2">
+              <p className="text-xs text-red-700">お支払いに失敗しています。カード情報を更新してください。</p>
+            </div>
+          )}
+
+          {!stripeConfigured ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs text-amber-800">決済機能は準備中です。しばらくお待ちください。</p>
+            </div>
+          ) : !clientSecret ? (
+            <>
+              {createSub.error && <p className="text-sm text-red-600">{createSub.error.message}</p>}
+              <Button className="w-full h-11" onClick={() => createSub.mutate()} disabled={createSub.isPending}>
+                {createSub.isPending ? '準備中...' : '登録手続きへ'}
+              </Button>
+            </>
+          ) : (
+            <Elements stripe={stripePromise} options={{ clientSecret, locale: 'ja' }}>
+              <CheckoutForm onSuccess={handlePaid} amount={s?.plan.amount ?? 2980} />
+            </Elements>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

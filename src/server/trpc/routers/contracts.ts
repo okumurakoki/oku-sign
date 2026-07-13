@@ -7,6 +7,7 @@ import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signingRequestEmail, signerCompletedEmail, signerDeclinedEmail, reminderEmail } from '@/server/email/templates'
 import { getSignedUrl } from '@/server/storage'
+import { hasActiveSubscription } from './billing'
 import type { Context } from '@/server/trpc/context'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
@@ -159,6 +160,16 @@ export const contractsRouter = router({
       })).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      // サブスクゲート: active/trialing（またはowner）でなければ作成不可
+      const allowed = await hasActiveSubscription(ctx.db, ctx.user)
+      if (!allowed) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'パートナープランへの登録が必要です',
+          cause: 'SUBSCRIPTION_REQUIRED',
+        })
+      }
+
       const contractId = ulid()
       await ctx.db.insert(contracts).values({
         id: contractId,

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export default function SettingsPage() {
   const utils = trpc.useUtils()
   const profile = trpc.auth.getProfile.useQuery()
+  const billing = trpc.billing.getSubscription.useQuery()
   const updateProfile = trpc.auth.updateProfile.useMutation({
     onSuccess: () => {
       utils.auth.getProfile.invalidate()
@@ -287,21 +289,25 @@ export default function SettingsPage() {
             <div className="px-5 py-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">現在のプラン</span>
-                <span className="text-sm font-medium">無料プラン</span>
+                <span className="text-sm font-medium">
+                  {billing.data?.isOwner
+                    ? '自社利用（無料）'
+                    : billing.data?.active
+                      ? 'パートナープラン'
+                      : '未加入'}
+                </span>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">書類送信数</span>
-                <span className="text-sm font-mono">{profile.data ? '無制限' : '-'}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">ストレージ</span>
-                <span className="text-sm font-mono">100 MB</span>
+                <span className="text-sm font-mono">{billing.data?.active || billing.data?.isOwner ? '無制限' : '-'}</span>
               </div>
               <div className="pt-2">
-                <Button variant="outline" size="sm" className="w-full" disabled>
-                  プランをアップグレード（準備中）
-                </Button>
+                <Link href="/settings/billing">
+                  <Button variant="outline" size="sm" className="w-full">
+                    プラン・お支払いを管理
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
