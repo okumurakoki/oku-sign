@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash, timingSafeEqual } from 'crypto'
 import { getDb } from '@/server/db'
 import { contractSigners, signatures, auditLogs, contracts, users } from '@/server/db/schema'
 import { eq } from 'drizzle-orm'
@@ -8,9 +9,16 @@ import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail } fro
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
 
+// アクセスコードのタイミングセーフ比較（長さ差による情報漏洩を防ぐためSHA-256で固定長化）
+function accessCodeMatches(input: string, expected: string): boolean {
+  const a = createHash('sha256').update(input).digest()
+  const b = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(a, b)
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json()
-  const { token, signatureImage, action, declineReason } = body
+  const { token, signatureImage, action, declineReason, accessCode } = body
 
   if (!token) {
     return NextResponse.json({ error: 'Missing token' }, { status: 400 })
@@ -40,6 +48,37 @@ export async function POST(request: NextRequest) {
 
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
+  }
+
+  // 契約が署名可能な状態か（draft/cancelled/completedは不可）
+  if (contract.status !== 'sent' && contract.status !== 'signing') {
+    return NextResponse.json({ error: 'この書類は現在署名を受け付けていません' }, { status: 409 })
+  }
+
+  // 署名期限チェック（サーバー側で強制）
+  if (contract.expiresAt && new Date(contract.expiresAt) < new Date()) {
+    return NextResponse.json({ error: '署名期限を過ぎています' }, { status: 410 })
+  }
+
+  // アクセスコード検証（設定されている場合のみ・タイミングセーフ比較）
+  if (signer.accessCode) {
+    if (typeof accessCode !== 'string' || !accessCodeMatches(accessCode, signer.accessCode)) {
+      return NextResponse.json({ error: 'アクセスコードが正しくありません', code: 'INVALID_ACCESS_CODE' }, { status: 403 })
+    }
+  }
+
+  // 署名順序の強制（自分より前の順序の署名者が全員署名済みであること）
+  if (action !== 'decline') {
+    const priorSigners = await db
+      .select()
+      .from(contractSigners)
+      .where(eq(contractSigners.contractId, signer.contractId))
+    const blocked = priorSigners.some(
+      (s) => s.signOrder < signer.signOrder && s.status !== 'signed',
+    )
+    if (blocked) {
+      return NextResponse.json({ error: '前の署名者の署名が完了していません', code: 'OUT_OF_ORDER' }, { status: 409 })
+    }
   }
 
   // Get sender info

@@ -5,7 +5,7 @@ export const contracts = pgTable('contracts', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   status: text('status', {
-    enum: ['draft', 'sent', 'signing', 'completed', 'cancelled'],
+    enum: ['draft', 'sent', 'signing', 'completed', 'cancelled', 'expired'],
   }).notNull().default('draft'),
   createdBy: text('created_by').notNull().references(() => users.id),
   pdfUrl: text('pdf_url'),

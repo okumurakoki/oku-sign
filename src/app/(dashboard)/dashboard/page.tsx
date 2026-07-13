@@ -11,6 +11,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   signing: { label: '署名中', className: 'bg-amber-50 text-amber-700' },
   completed: { label: '締結済み', className: 'bg-emerald-50 text-emerald-700' },
   cancelled: { label: '却下', className: 'bg-red-50 text-red-600' },
+  expired: { label: '期限切れ', className: 'bg-red-50 text-red-600' },
 }
 
 const actionLabels: Record<string, string> = {

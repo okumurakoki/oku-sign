@@ -30,7 +30,7 @@ async function assertContractOwner(
 export const contractsRouter = router({
   list: protectedProcedure
     .input(z.object({
-      status: z.enum(['draft', 'sent', 'signing', 'completed', 'cancelled']).optional(),
+      status: z.enum(['draft', 'sent', 'signing', 'completed', 'cancelled', 'expired']).optional(),
       search: z.string().optional(),
       page: z.number().int().min(1).optional(),
       perPage: z.number().int().min(1).max(100).optional(),

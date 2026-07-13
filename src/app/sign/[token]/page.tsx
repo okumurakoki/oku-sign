@@ -122,6 +122,7 @@ export default async function SignPage({
       senderCompany={sender?.companyName ?? null}
       message={contract.message}
       expiresAt={contract.expiresAt?.toISOString() ?? null}
+      requiresAccessCode={!!signer.accessCode}
     />
   )
 }

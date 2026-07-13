@@ -41,6 +41,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   signing: { label: '署名中', className: 'bg-amber-50 text-amber-700 border-amber-200' },
   completed: { label: '締結済み', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   cancelled: { label: '却下', className: 'bg-red-50 text-red-600 border-red-200' },
+  expired: { label: '期限切れ', className: 'bg-red-50 text-red-600 border-red-200' },
   pending: { label: '未署名', className: 'bg-gray-100 text-gray-500 border-gray-200' },
   viewed: { label: '閲覧済み', className: 'bg-sky-50 text-sky-700 border-sky-200' },
   signed: { label: '署名済み', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },

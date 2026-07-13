@@ -12,6 +12,7 @@ interface Props {
   senderCompany: string | null
   message: string | null
   expiresAt: string | null
+  requiresAccessCode: boolean
 }
 
 export function SigningView({
@@ -23,6 +24,7 @@ export function SigningView({
   senderCompany,
   message,
   expiresAt,
+  requiresAccessCode,
 }: Props) {
   const [mode, setMode] = useState<'view' | 'sign' | 'decline'>('view')
   const [agreed, setAgreed] = useState(false)
@@ -30,6 +32,8 @@ export function SigningView({
   const [completed, setCompleted] = useState<'signed' | 'declined' | null>(null)
   const [hasDrawn, setHasDrawn] = useState(false)
   const [declineReason, setDeclineReason] = useState('')
+  const [accessCode, setAccessCode] = useState('')
+  const [error, setError] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isDrawingRef = useRef(false)
 
@@ -81,6 +85,11 @@ export function SigningView({
 
   const handleSign = async () => {
     if (!agreed || !hasDrawn) return
+    if (requiresAccessCode && !accessCode.trim()) {
+      setError('アクセスコードを入力してください')
+      return
+    }
+    setError(null)
     setSubmitting(true)
 
     const canvas = canvasRef.current
@@ -90,23 +99,52 @@ export function SigningView({
       const res = await fetch('/api/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, signatureImage, action: 'sign' }),
+        body: JSON.stringify({
+          token,
+          signatureImage,
+          action: 'sign',
+          accessCode: requiresAccessCode ? accessCode : undefined,
+        }),
       })
-      if (res.ok) setCompleted('signed')
+      if (res.ok) {
+        setCompleted('signed')
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      setError(data.error ?? '署名の送信に失敗しました。時間をおいて再度お試しください')
+    } catch {
+      setError('通信エラーが発生しました。ネットワークをご確認ください')
     } finally {
       setSubmitting(false)
     }
   }
 
   const handleDecline = async () => {
+    if (requiresAccessCode && !accessCode.trim()) {
+      setError('アクセスコードを入力してください')
+      return
+    }
+    setError(null)
     setSubmitting(true)
     try {
       const res = await fetch('/api/sign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, action: 'decline', declineReason: declineReason || undefined }),
+        body: JSON.stringify({
+          token,
+          action: 'decline',
+          declineReason: declineReason || undefined,
+          accessCode: requiresAccessCode ? accessCode : undefined,
+        }),
       })
-      if (res.ok) setCompleted('declined')
+      if (res.ok) {
+        setCompleted('declined')
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      setError(data.error ?? '辞退の送信に失敗しました。時間をおいて再度お試しください')
+    } catch {
+      setError('通信エラーが発生しました。ネットワークをご確認ください')
     } finally {
       setSubmitting(false)
     }
@@ -278,6 +316,21 @@ export function SigningView({
 
             {/* Agreement & Submit */}
             <div className="bg-white rounded-lg border p-6 space-y-4">
+              {requiresAccessCode && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">アクセスコード</label>
+                  <p className="text-xs text-gray-400">送信者から別途通知されたアクセスコードを入力してください。</p>
+                  <input
+                    type="text"
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value)}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    className="flex w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm tracking-widest placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#3d4f5f] focus:ring-offset-2"
+                    placeholder="コードを入力"
+                  />
+                </div>
+              )}
               <label className="flex items-start gap-3 cursor-pointer">
                 <input
                   type="checkbox"
@@ -308,6 +361,10 @@ export function SigningView({
                 </Button>
               </div>
 
+              {error && (
+                <p className="text-sm text-red-600 text-center">{error}</p>
+              )}
+
               <p className="text-[11px] text-gray-400 text-center leading-relaxed">
                 署名することで、okuサインの利用規約およびプライバシーポリシーに同意したものとみなされます。
                 IPアドレス・タイムスタンプは監査ログに記録されます。
@@ -333,6 +390,21 @@ export function SigningView({
                 className="flex w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#3d4f5f] focus:ring-offset-2 resize-none"
               />
             </div>
+            {requiresAccessCode && (
+              <div className="space-y-2">
+                <label className="text-xs text-gray-500">アクセスコード</label>
+                <input
+                  type="text"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="flex w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm tracking-widest placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#3d4f5f] focus:ring-offset-2"
+                  placeholder="コードを入力"
+                />
+              </div>
+            )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="flex gap-3">
               <Button
                 variant="outline"

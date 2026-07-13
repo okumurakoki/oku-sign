@@ -188,3 +188,28 @@ ${btn(p.contractUrl, '書類を確認・ダウンロード')}`)
     text: `「${p.contractTitle}」が締結されました。\n${p.contractUrl}\n\nokuサイン`,
   }
 }
+
+// --- 期限切れ通知（送信者向け） ---
+export function contractExpiredEmail(p: {
+  senderName: string
+  contractTitle: string
+  contractUrl: string
+  pendingCount: number
+}) {
+  const html = layout(`
+<p style="margin:0 0 8px;font-size:14px;color:#333;line-height:1.7;">${p.senderName} 様</p>
+<p style="margin:0 0 24px;font-size:14px;color:#333;line-height:1.7;">
+「${p.contractTitle}」が署名期限を過ぎたため、期限切れとなりました。
+</p>
+${infoBox('未署名の署名者', `${p.pendingCount} 名`)}
+<p style="margin:0 0 20px;font-size:14px;color:#333;line-height:1.7;">
+引き続き署名が必要な場合は、書類を複製して再送信してください。
+</p>
+${btn(p.contractUrl, '書類の詳細を確認')}`)
+
+  return {
+    subject: `【期限切れ】${p.contractTitle}`,
+    html,
+    text: `「${p.contractTitle}」が署名期限を過ぎ、期限切れとなりました。\n${p.contractUrl}\n\nokuサイン`,
+  }
+}
