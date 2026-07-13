@@ -13,8 +13,9 @@ export function getStripeSecretKey(): string {
   const mode = getMode()
   const key = mode === 'live' ? process.env.STRIPE_SECRET_KEY_LIVE : process.env.STRIPE_SECRET_KEY_TEST
   if (!key) throw new Error(`STRIPE_SECRET_KEY_${mode.toUpperCase()} が未設定です`)
-  const expectedPrefix = mode === 'live' ? 'sk_live_' : 'sk_test_'
-  if (!key.startsWith(expectedPrefix)) {
+  // sk_（フル）と rk_（restricted key）の両方を許可。モード取り違え（test/live）は弾く。
+  const allowed = mode === 'live' ? ['sk_live_', 'rk_live_'] : ['sk_test_', 'rk_test_']
+  if (!allowed.some((p) => key.startsWith(p))) {
     throw new Error(`STRIPE_SECRET_KEY と STRIPE_MODE(${mode})が不一致です`)
   }
   return key
