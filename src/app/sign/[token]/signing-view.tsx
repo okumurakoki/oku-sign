@@ -358,7 +358,11 @@ export function SigningView(props: Props) {
               </Button>
             </div>
             <p className="text-[11px] text-gray-400 text-center leading-relaxed">
-              署名することで、okuサインの利用規約およびプライバシーポリシーに同意したものとみなされます。IPアドレス・タイムスタンプは監査ログに記録されます。
+              署名することで、okuサインの
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">利用規約</a>
+              および
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">プライバシーポリシー</a>
+              に同意したものとみなされます。IPアドレス・タイムスタンプは監査ログに記録されます。
             </p>
           </div>
         )}

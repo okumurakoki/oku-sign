@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -55,6 +56,7 @@ function NewContractForm() {
     }
   }, [template.data, templateLoaded])
 
+  const billing = trpc.billing.getSubscription.useQuery()
   const createContract = trpc.contracts.create.useMutation()
   const createFromTemplate = trpc.contracts.createFromTemplate.useMutation()
   const updateContract = trpc.contracts.update.useMutation()
@@ -177,6 +179,26 @@ function NewContractForm() {
   const validSigners = signers.filter((s) => s.name && s.email)
   const canProceedStep1 = title.length > 0
   const canProceedStep2 = validSigners.length > 0
+
+  // サブスク未加入なら登録を促す（契約作成はサーバーでもゲート済み）
+  if (billing.data && !billing.data.active) {
+    return (
+      <div className="mx-auto max-w-md py-16 text-center">
+        <div className="rounded-xl border bg-card p-8">
+          <h1 className="text-lg font-semibold">書類を送信するにはプラン登録が必要です</h1>
+          <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+            okuサインのパートナープラン（月額2,980円）にご登録いただくと、電子契約の送信が無制限でご利用いただけます。
+          </p>
+          <Link href="/settings/billing">
+            <Button className="mt-6 w-full h-11">プランに登録する</Button>
+          </Link>
+          <Link href="/contracts">
+            <Button variant="ghost" className="mt-2 w-full">書類一覧に戻る</Button>
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">

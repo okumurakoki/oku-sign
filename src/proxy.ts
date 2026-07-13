@@ -2,12 +2,15 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
-const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/sign', '/api/sign', '/api/trpc', '/api/webhook']
+const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/sign', '/api/sign', '/api/trpc', '/api/webhook', '/terms', '/privacy', '/legal']
+
+// 完全一致で公開するパス（LP）
+const PUBLIC_EXACT = ['/']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_EXACT.includes(pathname) || PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 

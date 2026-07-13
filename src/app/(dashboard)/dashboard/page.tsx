@@ -32,9 +32,23 @@ export default function DashboardPage() {
   const recent = trpc.dashboard.getRecentContracts.useQuery()
   const activity = trpc.dashboard.getRecentActivity.useQuery()
   const session = trpc.auth.getSession.useQuery()
+  const billing = trpc.billing.getSubscription.useQuery()
 
   return (
     <div className="space-y-6">
+      {/* サブスク未加入の登録誘導 */}
+      {billing.data && !billing.data.active && (
+        <div className="flex flex-col gap-3 rounded-lg border border-[#3d4f5f]/20 bg-[#3d4f5f]/[0.04] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-foreground">パートナープランに登録して書類を送信しましょう</p>
+            <p className="text-xs text-muted-foreground mt-0.5">月額2,980円・送信無制限。登録すると電子契約の送信が可能になります。</p>
+          </div>
+          <Link href="/settings/billing">
+            <Button size="sm" className="shrink-0">プランに登録</Button>
+          </Link>
+        </div>
+      )}
+
       {/* Welcome */}
       <div className="flex items-center justify-between">
         <div>
