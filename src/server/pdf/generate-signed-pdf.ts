@@ -21,26 +21,88 @@ export interface SignerCertInfo {
   signatureImage: string | null // data URL (PNG)
 }
 
+// 座標配置された署名内容（%座標）。ページ上の該当位置に描画する。
+export interface PlacedField {
+  page: number       // 1始まり
+  x: number          // 左上X（%）
+  y: number          // 左上Y（%）
+  width: number      // 幅（%）
+  height: number     // 高さ（%）
+  type: 'draw' | 'text' | 'date' | 'stamp'
+  imageData?: string | null // draw/stamp: PNG dataURL
+  value?: string | null     // text/date: 文字値
+}
+
 export interface SignedPdfInput {
   originalPdf: Buffer
   contractTitle: string
   contractId: string
   signers: SignerCertInfo[]
+  placedFields?: PlacedField[]
 }
 
-// 元PDFに署名証明ページを付与した署名済みPDFを生成して返す（立会人型）。
+// 元PDFに署名を座標配置し、署名証明ページを付与した署名済みPDFを生成して返す。
 export async function generateSignedPdf(input: SignedPdfInput): Promise<Buffer> {
   const pdfDoc = await PDFDocument.load(input.originalPdf)
   pdfDoc.registerFontkit(fontkit)
-  const font = await pdfDoc.embedFont(loadFontBytes(), { subset: true })
+  // subset:false で全グリフを埋め込む。可変フォントの subset は pdf.js で
+  // グリフが壊れる（実測で確認済み）ため、正確な日本語描画を優先する。
+  const font = await pdfDoc.embedFont(loadFontBytes(), { subset: false })
 
   // 原本のSHA-256（改ざん検知用）
   const docHash = createHash('sha256').update(input.originalPdf).digest('hex')
+
+  // 署名を本文の座標に配置
+  if (input.placedFields && input.placedFields.length > 0) {
+    await placeFieldsOnPages(pdfDoc, font, input.placedFields)
+  }
 
   await appendCertificatePage(pdfDoc, font, input, docHash)
 
   const bytes = await pdfDoc.save()
   return Buffer.from(bytes)
+}
+
+// 各署名欄を該当ページの座標（%→pt、PDFは左下原点）に描画
+async function placeFieldsOnPages(pdfDoc: PDFDocument, font: PDFFont, fields: PlacedField[]) {
+  const pageCount = pdfDoc.getPageCount()
+  for (const f of fields) {
+    if (f.page < 1 || f.page > pageCount) continue
+    const page = pdfDoc.getPage(f.page - 1)
+    const { width: pw, height: ph } = page.getSize()
+
+    const boxW = (f.width / 100) * pw
+    const boxH = (f.height / 100) * ph
+    const boxX = (f.x / 100) * pw
+    // %yは上端基準・PDFは下端基準
+    const boxYTop = (f.y / 100) * ph
+    const boxYBottom = ph - boxYTop - boxH
+
+    if ((f.type === 'draw' || f.type === 'stamp') && f.imageData) {
+      const img = await embedSignatureImage(pdfDoc, f.imageData)
+      if (img) {
+        // アスペクト比を保持して枠内に収める
+        const scale = Math.min(boxW / img.width, boxH / img.height)
+        const w = img.width * scale
+        const h = img.height * scale
+        page.drawImage(img, {
+          x: boxX + (boxW - w) / 2,
+          y: boxYBottom + (boxH - h) / 2,
+          width: w,
+          height: h,
+        })
+      }
+    } else if ((f.type === 'text' || f.type === 'date') && f.value) {
+      const size = Math.min(boxH * 0.7, 14)
+      page.drawText(f.value, {
+        x: boxX + 2,
+        y: boxYBottom + (boxH - size) / 2 + size * 0.15,
+        size,
+        font,
+        color: rgb(0.1, 0.1, 0.1),
+      })
+    }
+  }
 }
 
 async function appendCertificatePage(

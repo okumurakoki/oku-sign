@@ -1,6 +1,6 @@
 import { getDb } from '@/server/db'
-import { contractSigners, contracts, users } from '@/server/db/schema'
-import { eq } from 'drizzle-orm'
+import { contractSigners, contracts, users, signatureFields } from '@/server/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { getSignedUrl } from '@/server/storage'
 import { SigningView } from './signing-view'
 
@@ -123,12 +123,33 @@ export default async function SignPage({
     }
   }
 
+  // この署名者に割り当てられた署名欄のみ取得（他署名者の欄は返さない）
+  const myFields = await db
+    .select()
+    .from(signatureFields)
+    .where(and(
+      eq(signatureFields.contractId, contract.id),
+      eq(signatureFields.signerId, signer.id),
+    ))
+    .orderBy(signatureFields.page)
+
   return (
     <SigningView
       token={token}
       signerName={signer.name}
       contractTitle={contract.title}
       pdfUrl={pdfSignedUrl}
+      fields={myFields.map((f) => ({
+        id: f.id,
+        fieldType: f.fieldType,
+        label: f.label,
+        page: f.page,
+        x: f.x,
+        y: f.y,
+        width: f.width,
+        height: f.height,
+        required: f.required,
+      }))}
       senderName={sender?.name ?? null}
       senderCompany={sender?.companyName ?? null}
       message={contract.message}

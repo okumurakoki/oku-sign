@@ -158,6 +158,11 @@ export default function ContractDetailPage({
         <div className="flex items-center gap-2">
           {isDraft && (
             <>
+              {c.pdfName && (
+                <Link href={`/contracts/${id}/edit`}>
+                  <Button variant="outline" size="sm">署名欄を配置</Button>
+                </Link>
+              )}
               <Button
                 size="sm"
                 onClick={() => sendContract.mutate({ id })}

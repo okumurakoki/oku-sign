@@ -1,6 +1,7 @@
 export { users } from './users'
 export { contracts } from './contracts'
 export { contractSigners } from './contract-signers'
+export { signatureFields } from './signature-fields'
 export { signatures } from './signatures'
 export { auditLogs } from './audit-logs'
 export { templates } from './templates'

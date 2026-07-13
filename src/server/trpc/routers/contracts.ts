@@ -1,6 +1,6 @@
 import { protectedProcedure, router } from '@/server/trpc'
 import { TRPCError } from '@trpc/server'
-import { contracts, contractSigners, auditLogs, users, signatures } from '@/server/db/schema'
+import { contracts, contractSigners, auditLogs, users, signatures, signatureFields } from '@/server/db/schema'
 import { eq, desc, and, like, count, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
@@ -114,6 +114,12 @@ export const contractsRouter = router({
         .where(eq(auditLogs.contractId, input.id))
         .orderBy(desc(auditLogs.createdAt))
 
+      const fields = await ctx.db
+        .select()
+        .from(signatureFields)
+        .where(eq(signatureFields.contractId, input.id))
+        .orderBy(signatureFields.page)
+
       // PDFの署名付きURL（privateバケット・有効期限付き）を生成。
       // 締結済みは署名証明ページ付きの signed.pdf を優先。
       let pdfSignedUrl: string | null = null
@@ -133,7 +139,7 @@ export const contractsRouter = router({
         }
       }
 
-      return { ...contract, signers: signerList, auditLogs: logs, pdfSignedUrl, signedPdfUrl }
+      return { ...contract, signers: signerList, auditLogs: logs, fields, pdfSignedUrl, signedPdfUrl }
     }),
 
   create: protectedProcedure

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, timingSafeEqual } from 'crypto'
+import { z } from 'zod/v4'
 import { getDb } from '@/server/db'
-import { contractSigners, signatures, auditLogs, contracts, users } from '@/server/db/schema'
-import { eq } from 'drizzle-orm'
+import { contractSigners, signatures, signatureFields, auditLogs, contracts, users } from '@/server/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail } from '@/server/email/templates'
@@ -20,7 +21,7 @@ function accessCodeMatches(input: string, expected: string): boolean {
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
-  const { token, signatureImage, action, declineReason, accessCode } = body
+  const { token, signatureImage, action, declineReason, accessCode, fieldValues } = body
 
   if (!token) {
     return NextResponse.json({ error: 'Missing token' }, { status: 400 })
@@ -127,19 +128,68 @@ export async function POST(request: NextRequest) {
   }
 
   // --- SIGN ---
-  if (!signatureImage) {
-    return NextResponse.json({ error: 'Missing signature' }, { status: 400 })
+  // 入力バリデーション（フィールド方式 or 単一署名フォールバック）
+  const fieldValueSchema = z.array(z.object({
+    fieldId: z.string(),
+    type: z.enum(['draw', 'text', 'date', 'stamp']),
+    value: z.string().max(2000).optional(),
+    imageData: z.string().max(2_000_000).optional(),
+  }))
+  const parsed = fieldValueSchema.safeParse(fieldValues)
+
+  // 後方互換: fieldValues が無く signatureImage のみ来た場合は単一署名扱い
+  let incoming = parsed.success ? parsed.data : []
+  if (incoming.length === 0 && typeof signatureImage === 'string' && signatureImage) {
+    incoming = [{ fieldId: '', type: 'draw', imageData: signatureImage }]
+  }
+  if (incoming.length === 0) {
+    return NextResponse.json({ error: '署名内容がありません' }, { status: 400 })
   }
 
-  await db.insert(signatures).values({
-    id: ulid(),
-    contractId: signer.contractId,
-    signerId: signer.id,
-    imageUrl: signatureImage,
-    ipAddress: ip,
-    userAgent: ua,
-    signedAt: now,
-  })
+  // この署名者に割り当てられた署名欄を取得し、記入内容を検証
+  const myFields = await db
+    .select()
+    .from(signatureFields)
+    .where(and(
+      eq(signatureFields.contractId, signer.contractId),
+      eq(signatureFields.signerId, signer.id),
+    ))
+
+  if (myFields.length > 0) {
+    const fieldMap = new Map(myFields.map((f) => [f.id, f]))
+    // 送信された各値が自分の欄に属するか
+    for (const v of incoming) {
+      if (!fieldMap.has(v.fieldId)) {
+        return NextResponse.json({ error: '不正な署名欄が含まれています', code: 'INVALID_FIELD' }, { status: 400 })
+      }
+      const hasContent = (v.imageData && v.imageData.length > 0) || (v.value && v.value.length > 0)
+      if (!hasContent) {
+        return NextResponse.json({ error: '空の署名欄が含まれています' }, { status: 400 })
+      }
+    }
+    // 必須欄がすべて記入されているか（サーバー側で強制）
+    const filledIds = new Set(incoming.map((v) => v.fieldId))
+    const missingRequired = myFields.filter((f) => f.required && !filledIds.has(f.id))
+    if (missingRequired.length > 0) {
+      return NextResponse.json({ error: '必須の署名欄が未記入です', code: 'MISSING_REQUIRED' }, { status: 400 })
+    }
+  }
+
+  // 署名レコードを欄ごとに保存
+  await db.insert(signatures).values(
+    incoming.map((v) => ({
+      id: ulid(),
+      contractId: signer.contractId,
+      signerId: signer.id,
+      fieldId: v.fieldId || null,
+      type: v.type,
+      imageUrl: v.imageData ?? null,
+      value: v.value ?? null,
+      ipAddress: ip,
+      userAgent: ua,
+      signedAt: now,
+    })),
+  )
 
   await db
     .update(contractSigners)
@@ -179,7 +229,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (allSigned) {
-    // 署名済みPDF（原本＋署名証明ページ）を生成して保存
+    // 署名済みPDF（原本＋座標配置＋署名証明ページ）を生成して保存
     if (contract.pdfUrl) {
       try {
         const originalPdf = await downloadPdf(contract.pdfUrl)
@@ -187,15 +237,42 @@ export async function POST(request: NextRequest) {
           .select()
           .from(signatures)
           .where(eq(signatures.contractId, signer.contractId))
-        const sigBySigner = new Map(sigRows.map((r) => [r.signerId, r]))
+        const fieldRows = await db
+          .select()
+          .from(signatureFields)
+          .where(eq(signatureFields.contractId, signer.contractId))
+        const fieldMap = new Map(fieldRows.map((f) => [f.id, f]))
+
+        // 座標配置する署名（fieldId付きのもの）
+        const placedFields = sigRows
+          .filter((r) => r.fieldId && fieldMap.has(r.fieldId))
+          .map((r) => {
+            const f = fieldMap.get(r.fieldId!)!
+            return {
+              page: f.page,
+              x: f.x, y: f.y, width: f.width, height: f.height,
+              type: r.type,
+              imageData: r.imageUrl,
+              value: r.value,
+            }
+          })
+
+        // 証明ページ用：署名者ごとの代表署名画像（drawを優先）
+        const drawBySigner = new Map<string, typeof sigRows[number]>()
+        for (const r of sigRows) {
+          if (!drawBySigner.has(r.signerId) || (r.imageUrl && r.type === 'draw')) {
+            drawBySigner.set(r.signerId, r)
+          }
+        }
 
         const orderedSigners = [...allSigners].sort((a, b) => a.signOrder - b.signOrder)
         const signedPdf = await generateSignedPdf({
           originalPdf,
           contractTitle: contract.title,
           contractId: contract.id,
+          placedFields,
           signers: orderedSigners.map((s) => {
-            const sig = sigBySigner.get(s.id)
+            const sig = drawBySigner.get(s.id)
             return {
               name: s.name,
               email: s.email,
