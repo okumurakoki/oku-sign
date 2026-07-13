@@ -76,7 +76,10 @@ async function handleEvent(db: ReturnType<typeof getDb>, event: Stripe.Event) {
       }
       break
     }
-    case 'invoice.payment_failed': {
+    case 'invoice.payment_failed':
+    case 'invoice.payment_action_required': {
+      // 支払い失敗 or 追加認証(3Dセキュア/SCA)が必要 → past_due にして利用をゲート。
+      // 顧客が対応(再決済/認証)し invoice.paid が来れば active に戻る。
       const invoice = event.data.object as Stripe.Invoice
       const subId = invoiceSubscriptionId(invoice)
       if (subId) {
