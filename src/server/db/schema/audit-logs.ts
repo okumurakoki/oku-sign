@@ -1,0 +1,12 @@
+import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { contracts } from './contracts'
+
+export const auditLogs = pgTable('audit_logs', {
+  id: text('id').primaryKey(), // ULID
+  contractId: text('contract_id').references(() => contracts.id),
+  action: text('action').notNull(),
+  actorEmail: text('actor_email').notNull(),
+  detail: text('detail'),
+  ipAddress: text('ip_address'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
