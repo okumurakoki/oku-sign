@@ -6,8 +6,8 @@ import { signatureFields } from './signature-fields'
 // 署名欄1つにつき1レコード。fieldId=null は旧来の欄なし署名（後方互換）。
 export const signatures = pgTable('signatures', {
   id: text('id').primaryKey(), // ULID
-  contractId: text('contract_id').notNull().references(() => contracts.id),
-  signerId: text('signer_id').notNull().references(() => contractSigners.id),
+  contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+  signerId: text('signer_id').notNull().references(() => contractSigners.id, { onDelete: 'cascade' }),
   fieldId: text('field_id').references(() => signatureFields.id, { onDelete: 'cascade' }),
   type: text('type', { enum: ['draw', 'text', 'date', 'stamp'] }).notNull().default('draw'),
   // draw/stamp: 画像(dataURL or Storageパス)、text/date: 文字値

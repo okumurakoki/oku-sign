@@ -3,7 +3,7 @@ import { contracts } from './contracts'
 
 export const auditLogs = pgTable('audit_logs', {
   id: text('id').primaryKey(), // ULID
-  contractId: text('contract_id').references(() => contracts.id),
+  contractId: text('contract_id').references(() => contracts.id, { onDelete: 'cascade' }),
   action: text('action').notNull(),
   actorEmail: text('actor_email').notNull(),
   detail: text('detail'),
