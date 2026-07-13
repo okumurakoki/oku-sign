@@ -86,7 +86,7 @@ export default function TemplatesPage() {
     },
   })
 
-  const useTemplate = async (templateId: string) => {
+  const handleUseTemplate = async (templateId: string) => {
     // Navigate to new contract with template pre-fill
     router.push(`/contracts/new?templateId=${templateId}`)
   }
@@ -179,7 +179,7 @@ export default function TemplatesPage() {
                         variant="ghost"
                         size="sm"
                         className="h-7 text-[11px]"
-                        onClick={() => useTemplate(t.id)}
+                        onClick={() => handleUseTemplate(t.id)}
                       >
                         この書類で送信
                       </Button>
