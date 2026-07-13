@@ -37,12 +37,10 @@ export const templatesRouter = router({
 
   create: protectedProcedure
     .input(z.object({
-      title: z.string().min(1),
-      description: z.string().optional(),
-      pdfUrl: z.string().optional(),
-      pdfName: z.string().optional(),
-      pdfSize: z.number().optional(),
-      defaultMessage: z.string().optional(),
+      title: z.string().min(1).max(300),
+      description: z.string().max(2000).optional(),
+      // pdfUrl等はuploadルートがサーバー派生で設定
+      defaultMessage: z.string().max(5000).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const id = ulid()
@@ -50,9 +48,6 @@ export const templatesRouter = router({
         id,
         title: input.title,
         description: input.description || null,
-        pdfUrl: input.pdfUrl || null,
-        pdfName: input.pdfName || null,
-        pdfSize: input.pdfSize || null,
         defaultMessage: input.defaultMessage || null,
         createdBy: ctx.user.id,
       })
@@ -62,21 +57,15 @@ export const templatesRouter = router({
   update: protectedProcedure
     .input(z.object({
       id: z.string(),
-      title: z.string().min(1).optional(),
-      description: z.string().optional(),
-      pdfUrl: z.string().optional(),
-      pdfName: z.string().optional(),
-      pdfSize: z.number().optional(),
-      defaultMessage: z.string().optional(),
+      title: z.string().min(1).max(300).optional(),
+      description: z.string().max(2000).optional(),
+      defaultMessage: z.string().max(5000).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input
       const updateData: Record<string, unknown> = { updatedAt: new Date() }
       if (data.title !== undefined) updateData.title = data.title
       if (data.description !== undefined) updateData.description = data.description || null
-      if (data.pdfUrl !== undefined) updateData.pdfUrl = data.pdfUrl || null
-      if (data.pdfName !== undefined) updateData.pdfName = data.pdfName || null
-      if (data.pdfSize !== undefined) updateData.pdfSize = data.pdfSize || null
       if (data.defaultMessage !== undefined) updateData.defaultMessage = data.defaultMessage || null
 
       await ctx.db

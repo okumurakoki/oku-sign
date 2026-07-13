@@ -17,4 +17,7 @@ export const contractSigners = pgTable('contract_signers', {
   viewedAt: timestamp('viewed_at', { withTimezone: true }),
   signedAt: timestamp('signed_at', { withTimezone: true }),
   lastReminderAt: timestamp('last_reminder_at', { withTimezone: true }),
+  // アクセスコード総当たり対策
+  accessAttempts: integer('access_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
 })

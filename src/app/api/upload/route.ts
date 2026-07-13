@@ -56,9 +56,17 @@ export async function POST(request: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer())
   const path = await uploadPdfToPath(buffer, storagePath)
 
-  return NextResponse.json({
-    path,
-    name: file.name,
-    size: file.size,
-  })
+  // pdfUrl はサーバー派生パスでのみ設定（クライアントに任意パスを持たせない=IDOR防止）
+  const pdfName = file.name.slice(0, 255)
+  if (kind === 'template') {
+    await db.update(templates)
+      .set({ pdfUrl: path, pdfName, pdfSize: file.size, updatedAt: new Date() })
+      .where(and(eq(templates.id, targetId), eq(templates.createdBy, user.id)))
+  } else {
+    await db.update(contracts)
+      .set({ pdfUrl: path, pdfName, pdfSize: file.size, updatedAt: new Date() })
+      .where(and(eq(contracts.id, targetId), eq(contracts.createdBy, user.id)))
+  }
+
+  return NextResponse.json({ ok: true, name: pdfName, size: file.size })
 }

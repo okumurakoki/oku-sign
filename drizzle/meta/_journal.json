@@ -29,6 +29,13 @@
       "when": 1783956743666,
       "tag": "0003_ambiguous_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783960993559,
+      "tag": "0004_shallow_harpoon",
+      "breakpoints": true
     }
   ]
 }

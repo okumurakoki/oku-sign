@@ -42,6 +42,7 @@ export default function TemplatesPage() {
   const [defaultMessage, setDefaultMessage] = useState('')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const utils = trpc.useUtils()
 
@@ -56,15 +57,11 @@ export default function TemplatesPage() {
         formData.append('file', pdfFile)
         formData.append('kind', 'template')
         formData.append('targetId', data.id)
+        // uploadルートが pdfUrl/pdfName/pdfSize をサーバー側で永続化する
         const res = await fetch('/api/upload', { method: 'POST', body: formData })
-        if (res.ok) {
-          const uploadData = await res.json()
-          await updateTemplate.mutateAsync({
-            id: data.id,
-            pdfUrl: uploadData.path,
-            pdfName: uploadData.name,
-            pdfSize: uploadData.size,
-          })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          setUploadError(err.error ?? 'PDFのアップロードに失敗しました')
         }
         setUploading(false)
       }
@@ -74,7 +71,6 @@ export default function TemplatesPage() {
     },
   })
 
-  const updateTemplate = trpc.templates.update.useMutation()
 
   const duplicateTemplate = trpc.templates.duplicate.useMutation({
     onSuccess: () => utils.templates.list.invalidate(),
@@ -97,6 +93,7 @@ export default function TemplatesPage() {
     setDescription('')
     setDefaultMessage('')
     setPdfFile(null)
+    setUploadError('')
   }
 
   return (
@@ -290,6 +287,7 @@ export default function TemplatesPage() {
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
               />
             </div>
+            {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
             <div className="flex justify-end gap-3">
               <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>キャンセル</Button>
               <Button type="submit" disabled={!title || createTemplate.isPending || uploading}>

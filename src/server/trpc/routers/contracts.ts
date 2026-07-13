@@ -145,19 +145,17 @@ export const contractsRouter = router({
 
   create: protectedProcedure
     .input(z.object({
-      title: z.string().min(1),
-      pdfUrl: z.string().optional(),
-      pdfName: z.string().optional(),
-      pdfSize: z.number().optional(),
-      message: z.string().optional(),
+      title: z.string().min(1).max(300),
+      // pdfUrl/pdfName/pdfSize はクライアントから受け取らない（uploadルートがサーバー派生で設定）
+      message: z.string().max(5000).optional(),
       expiresAt: z.string().optional(),
       templateId: z.string().optional(),
       signers: z.array(z.object({
         email: z.string().email(),
-        name: z.string().min(1),
+        name: z.string().min(1).max(100),
         signOrder: z.number().int().min(1),
-        accessCode: z.string().optional(),
-      })).optional(),
+        accessCode: z.string().max(50).optional(),
+      })).max(20).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       // サブスクゲート: active/trialing（またはowner）でなければ作成不可
@@ -174,9 +172,6 @@ export const contractsRouter = router({
       await ctx.db.insert(contracts).values({
         id: contractId,
         title: input.title,
-        pdfUrl: input.pdfUrl,
-        pdfName: input.pdfName,
-        pdfSize: input.pdfSize,
         message: input.message,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
         createdBy: ctx.user.id,
@@ -311,20 +306,21 @@ export const contractsRouter = router({
   update: protectedProcedure
     .input(z.object({
       id: z.string(),
-      title: z.string().min(1).optional(),
-      pdfUrl: z.string().optional(),
-      pdfName: z.string().optional(),
-      pdfSize: z.number().optional(),
-      message: z.string().optional(),
+      title: z.string().min(1).max(300).optional(),
+      // pdfUrl等はクライアントから変更させない（uploadルート経由のみ）
+      message: z.string().max(5000).optional(),
       expiresAt: z.string().nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      // 下書きのみ編集可（送信後の内容改変=監査の毀損を防ぐ）
+      const contract = await assertContractOwner(ctx.db, input.id, ctx.user.id)
+      if (contract.status !== 'draft') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '下書き状態の書類のみ編集できます' })
+      }
+
       const { id, ...data } = input
       const updateData: Record<string, unknown> = { updatedAt: new Date() }
       if (data.title !== undefined) updateData.title = data.title
-      if (data.pdfUrl !== undefined) updateData.pdfUrl = data.pdfUrl
-      if (data.pdfName !== undefined) updateData.pdfName = data.pdfName
-      if (data.pdfSize !== undefined) updateData.pdfSize = data.pdfSize
       if (data.message !== undefined) updateData.message = data.message
       if (data.expiresAt !== undefined) updateData.expiresAt = data.expiresAt ? new Date(data.expiresAt) : null
 

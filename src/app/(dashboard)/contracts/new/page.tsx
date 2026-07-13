@@ -59,7 +59,6 @@ function NewContractForm() {
   const billing = trpc.billing.getSubscription.useQuery()
   const createContract = trpc.contracts.create.useMutation()
   const createFromTemplate = trpc.contracts.createFromTemplate.useMutation()
-  const updateContract = trpc.contracts.update.useMutation()
 
   const contacts = trpc.contacts.getAll.useQuery()
 
@@ -159,14 +158,7 @@ function NewContractForm() {
           const err = await uploadRes.json().catch(() => ({}))
           throw new Error(err.error ?? 'PDFのアップロードに失敗しました')
         }
-
-        const uploadData = await uploadRes.json()
-        await updateContract.mutateAsync({
-          id: result.id,
-          pdfUrl: uploadData.path,
-          pdfName: uploadData.name,
-          pdfSize: uploadData.size,
-        })
+        // uploadルートが pdfUrl/pdfName/pdfSize をサーバー側で永続化する
       }
 
       router.push(`/contracts/${result.id}`)
