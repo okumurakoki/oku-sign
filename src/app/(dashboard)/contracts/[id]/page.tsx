@@ -206,9 +206,11 @@ export default function ContractDetailPage({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {c.status === 'completed' && c.pdfSignedUrl && (
-            <a href={c.pdfSignedUrl} target="_blank" rel="noopener noreferrer">
-              <Button variant="outline" size="sm">PDFをダウンロード</Button>
+          {c.status === 'completed' && (c.signedPdfUrl || c.pdfSignedUrl) && (
+            <a href={c.signedPdfUrl ?? c.pdfSignedUrl ?? undefined} target="_blank" rel="noopener noreferrer">
+              <Button variant="outline" size="sm">
+                {c.signedPdfUrl ? '署名済みPDFをダウンロード' : 'PDFをダウンロード'}
+              </Button>
             </a>
           )}
         </div>

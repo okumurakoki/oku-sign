@@ -6,6 +6,8 @@ import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail } from '@/server/email/templates'
+import { downloadPdf, uploadSignedPdf } from '@/server/storage'
+import { generateSignedPdf } from '@/server/pdf/generate-signed-pdf'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
 
@@ -177,6 +179,47 @@ export async function POST(request: NextRequest) {
   }
 
   if (allSigned) {
+    // 署名済みPDF（原本＋署名証明ページ）を生成して保存
+    if (contract.pdfUrl) {
+      try {
+        const originalPdf = await downloadPdf(contract.pdfUrl)
+        const sigRows = await db
+          .select()
+          .from(signatures)
+          .where(eq(signatures.contractId, signer.contractId))
+        const sigBySigner = new Map(sigRows.map((r) => [r.signerId, r]))
+
+        const orderedSigners = [...allSigners].sort((a, b) => a.signOrder - b.signOrder)
+        const signedPdf = await generateSignedPdf({
+          originalPdf,
+          contractTitle: contract.title,
+          contractId: contract.id,
+          signers: orderedSigners.map((s) => {
+            const sig = sigBySigner.get(s.id)
+            return {
+              name: s.name,
+              email: s.email,
+              signedAt: s.signedAt ?? sig?.signedAt ?? null,
+              ipAddress: sig?.ipAddress ?? null,
+              signatureImage: sig?.imageUrl ?? null,
+            }
+          }),
+        })
+        await uploadSignedPdf(signedPdf, contract.id)
+      } catch (err) {
+        // PDF生成失敗でも締結は成立させる（監査ログに記録し後続で再生成可能に）
+        console.error(`[api/sign] 署名済みPDF生成失敗 contract=${contract.id}:`, err)
+        await db.insert(auditLogs).values({
+          id: ulid(),
+          contractId: signer.contractId,
+          action: 'signed_pdf_failed',
+          actorEmail: 'system',
+          detail: '署名済みPDFの生成に失敗しました（再生成が必要です）',
+          createdAt: new Date(),
+        })
+      }
+    }
+
     await db
       .update(contracts)
       .set({ status: 'completed', completedAt: now, updatedAt: now })

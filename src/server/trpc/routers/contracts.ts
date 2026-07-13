@@ -114,17 +114,26 @@ export const contractsRouter = router({
         .where(eq(auditLogs.contractId, input.id))
         .orderBy(desc(auditLogs.createdAt))
 
-      // PDFの署名付きURL（privateバケット・有効期限付き）を生成
+      // PDFの署名付きURL（privateバケット・有効期限付き）を生成。
+      // 締結済みは署名証明ページ付きの signed.pdf を優先。
       let pdfSignedUrl: string | null = null
+      let signedPdfUrl: string | null = null
       if (contract.pdfUrl) {
         try {
           pdfSignedUrl = await getSignedUrl(contract.pdfUrl)
         } catch (err) {
-          console.error('[contracts.getById] PDF署名URL生成失敗:', err)
+          console.error('[contracts.getById] 原本PDF署名URL生成失敗:', err)
+        }
+      }
+      if (contract.status === 'completed') {
+        try {
+          signedPdfUrl = await getSignedUrl(`contracts/${contract.id}/signed.pdf`)
+        } catch (err) {
+          console.error('[contracts.getById] 署名済みPDF署名URL生成失敗:', err)
         }
       }
 
-      return { ...contract, signers: signerList, auditLogs: logs, pdfSignedUrl }
+      return { ...contract, signers: signerList, auditLogs: logs, pdfSignedUrl, signedPdfUrl }
     }),
 
   create: protectedProcedure
