@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
-const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/sign', '/api/sign', '/api/trpc', '/api/webhook', '/terms', '/privacy', '/legal']
+const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/sign', '/api/sign', '/api/trpc', '/api/webhook', '/api/cron', '/terms', '/privacy', '/legal']
 
 // 完全一致で公開するパス（LP）
 const PUBLIC_EXACT = ['/']
