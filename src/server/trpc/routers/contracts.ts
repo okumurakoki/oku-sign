@@ -294,9 +294,15 @@ export const contractsRouter = router({
       })
     }),
 
+  // 削除は下書きのみ許可。送信以降（sent/signing/completed/cancelled/expired）は
+  // 法的な監査証跡・署名証拠を保持する必要があるため削除不可（電子帳簿/契約の保存要件）。
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      const contract = await assertContractOwner(ctx.db, input.id, ctx.user.id)
+      if (contract.status !== 'draft') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '送信済みの書類は削除できません（記録保持のため）' })
+      }
       await ctx.db
         .delete(contracts)
         .where(and(eq(contracts.id, input.id), eq(contracts.createdBy, ctx.user.id)))
@@ -306,11 +312,13 @@ export const contractsRouter = router({
     .input(z.object({ ids: z.array(z.string()) }))
     .mutation(async ({ ctx, input }) => {
       if (input.ids.length === 0) return
+      // 下書きのみ削除（送信以降は保持）。対象外は黙ってスキップする。
       await ctx.db
         .delete(contracts)
         .where(and(
           inArray(contracts.id, input.ids),
           eq(contracts.createdBy, ctx.user.id),
+          eq(contracts.status, 'draft'),
         ))
     }),
 
