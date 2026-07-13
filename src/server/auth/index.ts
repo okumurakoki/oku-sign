@@ -59,7 +59,7 @@ export async function getCurrentUser() {
     supabaseUid: authUser.id,
     email: authUser.email!,
     name: authUser.user_metadata?.name ?? authUser.email!.split('@')[0],
-    companyName: null,
+    companyName: authUser.user_metadata?.company_name ?? null,
     role: 'admin' as const,
     createdAt: new Date(),
   }

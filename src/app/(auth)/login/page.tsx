@@ -1,11 +1,51 @@
 'use client'
 
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { createSupabaseBrowser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 
-export default function LoginPage() {
+const CALLBACK_ERRORS: Record<string, string> = {
+  callback: '認証処理に失敗しました。もう一度ログインしてください',
+  expired: '確認リンクの有効期限が切れています。再度ログインまたは登録してください',
+  missing_params: '認証リンクが不正です。もう一度お試しください',
+}
+
+function LoginForm() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const callbackError = searchParams.get('error')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(
+    callbackError ? (CALLBACK_ERRORS[callbackError] ?? CALLBACK_ERRORS.callback) : null,
+  )
+  const [loading, setLoading] = useState(false)
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    const supabase = createSupabaseBrowser()
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setError(
+        error.message === 'Invalid login credentials'
+          ? 'メールアドレスまたはパスワードが正しくありません'
+          : error.message === 'Email not confirmed'
+            ? 'メールアドレスが未確認です。確認メールのリンクを開いてください'
+            : 'ログインに失敗しました。時間をおいて再度お試しください',
+      )
+      setLoading(false)
+      return
+    }
+    router.replace('/dashboard')
+    router.refresh()
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="w-full max-w-sm">
@@ -17,33 +57,51 @@ export default function LoginPage() {
           <p className="text-sm text-gray-500 mt-1">アカウントにログイン</p>
         </div>
 
-        <div className="bg-white rounded-lg border p-6 space-y-4">
+        <form onSubmit={handleLogin} className="bg-white rounded-lg border p-6 space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email" className="text-xs">メールアドレス</Label>
-            <Input id="email" type="email" placeholder="you@example.com" />
+            <Input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="password" className="text-xs">パスワード</Label>
-            <Input id="password" type="password" />
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
           </div>
-          <Button className="w-full h-10">ログイン</Button>
-
-          <div className="relative">
-            <Separator />
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-2 text-xs text-gray-400">
-              または
-            </span>
-          </div>
-
-          <Button variant="outline" className="w-full h-10">
-            Googleでログイン
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          <Button type="submit" className="w-full h-10" disabled={loading}>
+            {loading ? 'ログイン中...' : 'ログイン'}
           </Button>
-        </div>
+        </form>
 
-        <p className="text-[11px] text-gray-400 text-center mt-4">
-          Supabase Auth連携後に有効化
+        <p className="text-xs text-gray-500 text-center mt-4">
+          アカウントをお持ちでない方は{' '}
+          <Link href="/signup" className="text-[#3d4f5f] font-medium hover:underline">
+            新規登録
+          </Link>
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   )
 }

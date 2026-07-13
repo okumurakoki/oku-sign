@@ -1,6 +1,8 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { trpc } from '@/lib/trpc'
+import { createSupabaseBrowser } from '@/lib/supabase/client'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +12,19 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 export function Header() {
+  const router = useRouter()
   const session = trpc.auth.getSession.useQuery()
+
+  const handleLogout = async () => {
+    const supabase = createSupabaseBrowser()
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      console.error('[header] signOut failed:', error.message)
+    }
+    // 失敗してもローカルセッションは破棄されるためログインへ遷移
+    router.replace('/login')
+    router.refresh()
+  }
 
   return (
     <header className="h-12 border-b border-border bg-card flex items-center justify-between px-6">
@@ -39,7 +53,10 @@ export function Header() {
                 <a href="/settings" className="cursor-pointer">設定</a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-muted-foreground text-xs cursor-pointer">
+              <DropdownMenuItem
+                className="text-muted-foreground text-xs cursor-pointer"
+                onSelect={handleLogout}
+              >
                 ログアウト
               </DropdownMenuItem>
             </DropdownMenuContent>
