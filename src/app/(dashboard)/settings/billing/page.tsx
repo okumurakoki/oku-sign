@@ -128,7 +128,7 @@ export default function BillingPage() {
                     key={k}
                     type="button"
                     onClick={() => setSelectedPlan(k)}
-                    className={`rounded-lg border p-4 text-left transition-colors ${active ? 'border-[#3d4f5f] bg-[#3d4f5f]/[0.04] ring-1 ring-[#3d4f5f]' : 'hover:bg-muted/50'}`}
+                    className={`rounded-lg border p-4 text-left transition-colors ${active ? 'border-[#2680EB] bg-[#2680EB]/[0.04] ring-1 ring-[#2680EB]' : 'hover:bg-muted/50'}`}
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">{k === 'yearly' ? '年額' : '月額'}</span>

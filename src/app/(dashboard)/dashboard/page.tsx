@@ -4,27 +4,21 @@ import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-
-const statusConfig: Record<string, { label: string; className: string }> = {
-  draft: { label: '下書き', className: 'bg-gray-100 text-gray-600' },
-  sent: { label: '確認待ち', className: 'bg-blue-50 text-blue-700' },
-  signing: { label: '署名中', className: 'bg-amber-50 text-amber-700' },
-  completed: { label: '締結済み', className: 'bg-emerald-50 text-emerald-700' },
-  cancelled: { label: '却下', className: 'bg-red-50 text-red-600' },
-  expired: { label: '期限切れ', className: 'bg-red-50 text-red-600' },
-}
+import { StatusBadge, SignProgress } from '@/lib/contract-status'
 
 const actionLabels: Record<string, string> = {
-  created: '作成',
-  sent: '送信',
-  signed: '署名',
-  declined: '辞退',
-  cancelled: '取消',
-  completed: '締結',
-  reminder_sent: 'リマインダー',
-  signer_added: '署名者追加',
-  signer_removed: '署名者削除',
-  viewed: '閲覧',
+  created: '作成', sent: '送信', signed: '署名', declined: '辞退',
+  cancelled: '取消', completed: '締結', reminder_sent: 'リマインダー',
+  signer_added: '署名者追加', signer_removed: '署名者削除', viewed: '閲覧', notified: '通知', expired: '期限切れ',
+}
+const actionDot: Record<string, string> = {
+  completed: 'var(--ok)', declined: 'var(--alert)', signed: 'var(--primary)',
+  sent: 'var(--wait)', viewed: '#38BDF8',
+}
+
+function MonthDay({ iso }: { iso: string | Date }) {
+  const d = new Date(iso)
+  return <span className="tnum">{`${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')}`}</span>
 }
 
 export default function DashboardPage() {
@@ -34,118 +28,121 @@ export default function DashboardPage() {
   const session = trpc.auth.getSession.useQuery()
   const billing = trpc.billing.getSubscription.useQuery()
 
+  // 要対応 = 相手の署名・確認を待っている書類（送信側として動きを見る対象）
+  const attention = (recent.data ?? []).filter((c) => c.status === 'sent' || c.status === 'signing').slice(0, 5)
+
+  const strip: { label: string; value: number; href: string; hot?: boolean }[] = [
+    { label: '確認待ち', value: stats.data?.sentOnly ?? 0, href: '/contracts?status=sent', hot: (stats.data?.sentOnly ?? 0) > 0 },
+    { label: '署名中', value: stats.data?.signing ?? 0, href: '/contracts?status=signing' },
+    { label: '締結済み', value: stats.data?.completed ?? 0, href: '/contracts?status=completed' },
+    { label: '今月作成', value: stats.data?.thisMonth ?? 0, href: '/contracts' },
+    { label: '書類 総数', value: stats.data?.total ?? 0, href: '/contracts' },
+    { label: '連絡先', value: stats.data?.contacts ?? 0, href: '/contacts' },
+  ]
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* サブスク未加入の登録誘導 */}
       {billing.data && !billing.data.active && (
-        <div className="flex flex-col gap-3 rounded-lg border border-[#3d4f5f]/20 bg-[#3d4f5f]/[0.04] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-lg border border-primary/25 bg-accent px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-medium text-foreground">パートナープランに登録して書類を送信しましょう</p>
-            <p className="text-xs text-muted-foreground mt-0.5">月額2,980円・送信無制限。登録すると電子契約の送信が可能になります。</p>
+            <p className="text-sm font-semibold">パートナープランに登録して書類を送信しましょう</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">月額2,980円・送信無制限。登録すると電子契約の送信が可能になります。</p>
           </div>
-          <Link href="/settings/billing">
-            <Button size="sm" className="shrink-0">プランに登録</Button>
-          </Link>
+          <Link href="/settings/billing"><Button size="sm" className="shrink-0">プランに登録</Button></Link>
         </div>
       )}
 
-      {/* Welcome */}
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            {session.data ? `${session.data.name} さん` : 'ダッシュボード'}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            書類の送信状況と最近のアクティビティ
-          </p>
-        </div>
+        <h1 className="text-lg font-bold tracking-tight">
+          {session.data ? `こんにちは、${session.data.name} さん` : 'ホーム'}
+        </h1>
         <Link href="/contracts/new">
           <Button size="sm">新しく送信する</Button>
         </Link>
       </div>
 
-      {/* KPI Grid - 5 columns for wider layout */}
+      {/* サマリー帯: 罫線区切りの横並び */}
       {stats.isLoading ? (
-        <div className="grid grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-lg border bg-card p-4">
-              <Skeleton className="h-3 w-16 mb-2" />
-              <Skeleton className="h-7 w-10" />
-            </div>
-          ))}
-        </div>
+        <div className="rounded-lg border bg-card p-4"><Skeleton className="h-10 w-full" /></div>
       ) : (
-        <div className="grid grid-cols-5 gap-3">
-          {[
-            { label: '全書類', value: stats.data?.total ?? 0, color: '', href: '/contracts' },
-            { label: '確認待ち', value: stats.data?.sent ?? 0, color: 'text-blue-700', href: '/contracts?status=sent' },
-            { label: '下書き', value: stats.data?.draft ?? 0, color: '', href: '/contracts?status=draft' },
-            { label: '締結済み', value: stats.data?.completed ?? 0, color: 'text-emerald-700', href: '/contracts?status=completed' },
-            { label: '今月の送信', value: stats.data?.thisMonth ?? 0, color: 'text-primary', href: '/contracts' },
-          ].map((item) => (
-            <Link key={item.label} href={item.href}>
-              <div className="rounded-lg border bg-card p-4 hover:border-primary/30 transition-colors">
-                <p className="text-[11px] text-muted-foreground mb-1">{item.label}</p>
-                <p className={`text-2xl font-semibold font-mono ${item.color}`}>{item.value}</p>
-              </div>
+        <div className="grid grid-cols-3 overflow-hidden rounded-lg border bg-card sm:grid-cols-6">
+          {strip.map((s, i) => (
+            <Link
+              key={s.label}
+              href={s.href}
+              className={`px-4 py-3 transition-colors hover:bg-[#FAFBFC] ${i > 0 ? 'border-l border-[var(--line-soft)]' : ''}`}
+            >
+              <p className="text-[11px] text-muted-foreground">{s.label}</p>
+              <p className={`tnum mt-0.5 text-[19px] font-bold leading-none ${s.hot ? 'text-[var(--wait)]' : ''}`}>
+                {s.value}
+              </p>
             </Link>
           ))}
         </div>
       )}
 
-      {/* 3-Column Layout */}
-      <div className="grid grid-cols-12 gap-5">
-        {/* Recent Contracts - 5 cols */}
-        <div className="col-span-5">
-          <div className="rounded-lg border bg-card">
-            <div className="flex items-center justify-between px-5 py-3 border-b">
-              <p className="text-sm font-medium">最近の書類</p>
-              <Link href="/contracts" className="text-xs text-primary hover:text-primary/80 transition-colors">
-                すべて表示
+      {/* 要対応: 相手待ちの書類 */}
+      {attention.length > 0 && (
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="flex h-10 items-center border-b px-4">
+            <p className="text-[13px] font-bold">相手の対応を待っている書類</p>
+            <Link href="/contracts?status=sent" className="ml-auto text-xs font-medium text-primary hover:underline">
+              すべて見る
+            </Link>
+          </div>
+          {attention.map((c) => (
+            <div key={c.id} className="flex h-12 items-center gap-4 border-b border-[var(--line-soft)] px-4 last:border-0">
+              <Link href={`/contracts/${c.id}`} className="min-w-0 flex-1 truncate text-[13px] font-medium hover:text-primary">
+                {c.title}
+              </Link>
+              <SignProgress signed={c.signerCount.signed} total={c.signerCount.total} />
+              <StatusBadge status={c.status} />
+              <Link href={`/contracts/${c.id}`}>
+                <Button variant="outline" size="sm" className="h-7 text-xs">確認する</Button>
               </Link>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* 最近の書類（メイン） + 最近の動き（従） */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="flex h-10 items-center border-b px-4">
+              <p className="text-[13px] font-bold">最近の書類</p>
+              <Link href="/contracts" className="ml-auto text-xs font-medium text-primary hover:underline">すべて見る</Link>
+            </div>
             {recent.isLoading ? (
-              <div className="p-5 space-y-3">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
+              <div className="space-y-3 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : recent.data?.length === 0 ? (
-              <div className="py-12 text-center">
-                <p className="text-sm text-muted-foreground mb-3">まだ書類がありません</p>
-                <Link href="/contracts/new">
-                  <Button variant="outline" size="sm">最初の書類を送信する</Button>
-                </Link>
+              <div className="py-16 text-center">
+                <p className="mb-4 text-sm text-muted-foreground">まだ書類がありません</p>
+                <Link href="/contracts/new"><Button variant="outline" size="sm">最初の書類を送信する</Button></Link>
               </div>
             ) : (
-              <div className="divide-y">
+              <div>
                 {recent.data?.map((c) => {
-                  const config = statusConfig[c.status]
+                  const danger = c.status === 'expired' || c.status === 'cancelled'
                   return (
                     <Link
                       key={c.id}
                       href={`/contracts/${c.id}`}
-                      className="flex items-center gap-3 px-5 py-3 hover:bg-muted/40 transition-colors"
+                      className="flex h-12 items-center gap-4 border-b border-[var(--line-soft)] px-4 transition-colors last:border-0 hover:bg-[#FAFBFC]"
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{c.title}</p>
-                        {c.pdfName && (
-                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{c.pdfName}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {c.signerCount.total > 0 && (
-                          <span className="text-[11px] font-mono text-muted-foreground">
-                            <span className={c.signerCount.signed === c.signerCount.total ? 'text-emerald-600' : ''}>
-                              {c.signerCount.signed}
-                            </span>
-                            /{c.signerCount.total}
-                          </span>
-                        )}
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] ${config.className}`}>
-                          {config.label}
-                        </span>
-                      </div>
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                        {c.title}
+                        {c.pdfName && <span className="ml-2 text-[11px] font-normal text-[var(--faint)]">{c.pdfName}</span>}
+                      </span>
+                      <span className="hidden sm:inline-flex">
+                        <SignProgress signed={c.signerCount.signed} total={c.signerCount.total} danger={danger} />
+                      </span>
+                      <StatusBadge status={c.status} />
+                      <span className="hidden w-10 shrink-0 text-right text-[11.5px] text-muted-foreground md:inline">
+                        <MonthDay iso={c.updatedAt} />
+                      </span>
                     </Link>
                   )
                 })}
@@ -154,110 +151,37 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Activity Feed - 4 cols */}
-        <div className="col-span-4">
-          <div className="rounded-lg border bg-card">
-            <div className="flex items-center justify-between px-5 py-3 border-b">
-              <p className="text-sm font-medium">アクティビティ</p>
-              <Link href="/audit" className="text-xs text-primary hover:text-primary/80 transition-colors">
-                すべて表示
-              </Link>
+        <div>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="flex h-10 items-center border-b px-4">
+              <p className="text-[13px] font-bold">最近の動き</p>
+              <Link href="/audit" className="ml-auto text-xs font-medium text-primary hover:underline">履歴</Link>
             </div>
             {activity.isLoading ? (
-              <div className="p-5 space-y-3">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
-              </div>
+              <div className="space-y-3 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : activity.data?.length === 0 ? (
-              <div className="py-12 text-center">
-                <p className="text-sm text-muted-foreground">アクティビティはありません</p>
-              </div>
+              <div className="py-16 text-center"><p className="text-sm text-muted-foreground">まだ動きはありません</p></div>
             ) : (
-              <div className="divide-y max-h-[500px] overflow-y-auto">
-                {activity.data?.map((log) => {
-                  const label = actionLabels[log.action] ?? log.action
-                  return (
-                    <div key={log.id} className="px-5 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          log.action === 'completed' ? 'bg-emerald-500' :
-                          log.action === 'declined' ? 'bg-red-500' :
-                          log.action === 'signed' ? 'bg-blue-500' :
-                          log.action === 'sent' ? 'bg-amber-500' :
-                          'bg-gray-300'
-                        }`} />
-                        <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${
-                          log.action === 'completed' ? 'bg-emerald-50 text-emerald-700' :
-                          log.action === 'declined' ? 'bg-red-50 text-red-600' :
-                          log.action === 'signed' ? 'bg-blue-50 text-blue-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>
-                          {label}
-                        </span>
-                      </div>
-                      <p className="text-xs text-foreground mt-1 truncate">{log.detail}</p>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        {new Date(log.createdAt).toLocaleString('ja-JP')}
+              <div className="max-h-[420px] overflow-y-auto py-1">
+                {activity.data?.slice(0, 12).map((log) => (
+                  <div key={log.id} className="flex gap-3 px-4 py-2.5">
+                    <span
+                      className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                      style={{ background: actionDot[log.action] ?? 'var(--line-strong)' }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs leading-snug">
+                        <span className="font-semibold">{actionLabels[log.action] ?? log.action}</span>{' '}
+                        <span className="text-muted-foreground">{log.detail}</span>
+                      </p>
+                      <span className="tnum text-[10px] text-[var(--faint)]">
+                        {new Date(log.createdAt).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Sidebar Stats - 3 cols */}
-        <div className="col-span-3 space-y-4">
-          <div className="rounded-lg border bg-card">
-            <div className="px-5 py-3 border-b">
-              <p className="text-sm font-medium">ステータス概要</p>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              {[
-                { label: '下書き', value: stats.data?.draft ?? 0, color: '' },
-                { label: '確認待ち', value: stats.data?.sent ?? 0, color: 'text-blue-700' },
-                { label: '締結済み', value: stats.data?.completed ?? 0, color: 'text-emerald-700' },
-                { label: 'キャンセル', value: stats.data?.cancelled ?? 0, color: 'text-red-600' },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{item.label}</span>
-                  <span className={`text-sm font-mono ${item.color}`}>{item.value}</span>
-                </div>
-              ))}
-              <div className="border-t pt-3 flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">登録連絡先</span>
-                <span className="text-sm font-mono">{stats.data?.contacts ?? 0}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="rounded-lg border bg-card">
-            <div className="px-5 py-3 border-b">
-              <p className="text-sm font-medium">クイックアクション</p>
-            </div>
-            <div className="px-5 py-4 space-y-2">
-              <Link href="/contracts/new" className="block">
-                <div className="rounded-md border px-3 py-2 hover:bg-muted/40 transition-colors">
-                  <p className="text-sm font-medium">書類を送信する</p>
-                  <p className="text-[11px] text-muted-foreground">新しい書類を作成して署名を依頼</p>
-                </div>
-              </Link>
-              <Link href="/templates" className="block">
-                <div className="rounded-md border px-3 py-2 hover:bg-muted/40 transition-colors">
-                  <p className="text-sm font-medium">テンプレートから作成</p>
-                  <p className="text-[11px] text-muted-foreground">定型書類のテンプレートを使用</p>
-                </div>
-              </Link>
-              <Link href="/contacts" className="block">
-                <div className="rounded-md border px-3 py-2 hover:bg-muted/40 transition-colors">
-                  <p className="text-sm font-medium">連絡先を管理</p>
-                  <p className="text-[11px] text-muted-foreground">アドレス帳の整理と追加</p>
-                </div>
-              </Link>
-            </div>
           </div>
         </div>
       </div>

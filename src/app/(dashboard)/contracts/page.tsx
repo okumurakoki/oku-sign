@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StatusBadge, SignProgress } from '@/lib/contract-status'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,25 +26,29 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
-const statusConfig: Record<string, { label: string; className: string }> = {
-  draft: { label: '下書き', className: 'bg-gray-100 text-gray-600 border-gray-200' },
-  sent: { label: '確認待ち', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  signing: { label: '署名中', className: 'bg-amber-50 text-amber-700 border-amber-200' },
-  completed: { label: '締結済み', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  cancelled: { label: '却下', className: 'bg-red-50 text-red-600 border-red-200' },
-  expired: { label: '期限切れ', className: 'bg-red-50 text-red-600 border-red-200' },
+type StatusFilter = 'all' | 'draft' | 'sent' | 'signing' | 'completed' | 'cancelled' | 'expired'
+
+function UpdatedAt({ iso }: { iso: string | Date }) {
+  const d = new Date(iso)
+  return (
+    <span className="tnum">
+      {d.getMonth() + 1}/{String(d.getDate()).padStart(2, '0')}{' '}
+      {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}
+    </span>
+  )
 }
 
-type StatusFilter = 'all' | 'draft' | 'sent' | 'signing' | 'completed' | 'cancelled'
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+const FILTERS: StatusFilter[] = ['all', 'draft', 'sent', 'signing', 'completed', 'cancelled', 'expired']
 
 export default function ContractsPage() {
   const [filter, setFilter] = useState<StatusFilter>('all')
+
+  // ダッシュボード等からの ?status= をマウント後に反映
+  // （SSRと初期描画を'all'で一致させ、ハイドレーション不一致を避ける）
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get('status')
+    if (s && FILTERS.includes(s as StatusFilter)) setFilter(s as StatusFilter)
+  }, [])
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [page, setPage] = useState(1)
@@ -113,96 +118,102 @@ export default function ContractsPage() {
     setPage(1)
   }
 
+  const selectTab = (key: StatusFilter) => {
+    setFilter(key)
+    setPage(1)
+    setSelected(new Set())
+  }
+
+  // タブ: 主要状態は常設、取消/期限切れは存在する時だけ出す
+  const tabs: { key: StatusFilter; label: string; count: number }[] = [
+    { key: 'all', label: 'すべて', count: stats.data?.total ?? 0 },
+    { key: 'draft', label: '下書き', count: stats.data?.draft ?? 0 },
+    { key: 'sent', label: '確認待ち', count: stats.data?.sentOnly ?? 0 },
+    { key: 'signing', label: '署名中', count: stats.data?.signing ?? 0 },
+    { key: 'completed', label: '締結済み', count: stats.data?.completed ?? 0 },
+    ...(stats.data && stats.data.cancelled > 0
+      ? [{ key: 'cancelled' as StatusFilter, label: '取消', count: stats.data.cancelled }]
+      : []),
+    ...(stats.data && stats.data.expired > 0
+      ? [{ key: 'expired' as StatusFilter, label: '期限切れ', count: stats.data.expired }]
+      : []),
+  ]
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">書類管理</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            送信した書類の管理・署名状況の確認ができます
-          </p>
-        </div>
+        <h1 className="text-lg font-bold tracking-tight">書類</h1>
         <Link href="/contracts/new">
           <Button size="sm">新しく送信する</Button>
         </Link>
       </div>
 
-      {/* KPI Tabs */}
-      <div className="grid grid-cols-5 gap-2.5">
-        {stats.isLoading ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-lg border bg-card p-3">
-              <Skeleton className="h-3 w-10 mb-1.5" />
-              <Skeleton className="h-6 w-7" />
-            </div>
-          ))
-        ) : (
-          <>
-            {[
-              { key: 'all' as StatusFilter, label: '全書類', value: stats.data?.total ?? 0, color: '' },
-              { key: 'sent' as StatusFilter, label: '確認待ち', value: stats.data?.sent ?? 0, color: 'text-blue-700' },
-              { key: 'draft' as StatusFilter, label: '下書き', value: stats.data?.draft ?? 0, color: '' },
-              { key: 'completed' as StatusFilter, label: '締結済み', value: stats.data?.completed ?? 0, color: 'text-emerald-700' },
-              { key: 'cancelled' as StatusFilter, label: 'キャンセル', value: stats.data?.cancelled ?? 0, color: 'text-red-600' },
-            ].map((item) => (
+      {/* Toolbar: 状態タブ + 検索 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-0.5 rounded-lg bg-[var(--slate-bg)] p-[3px]">
+          {tabs.map((t) => {
+            const on = filter === t.key
+            return (
               <button
-                key={item.key}
-                onClick={() => { setFilter(item.key); setPage(1) }}
-                className={`rounded-lg border p-3 text-left transition-all ${
-                  filter === item.key ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20' : 'bg-card hover:border-gray-300'
+                key={t.key}
+                onClick={() => selectTab(t.key)}
+                className={`rounded-md px-3 py-1.5 text-[12.5px] transition-colors ${
+                  on
+                    ? 'bg-white font-semibold text-foreground shadow-sm'
+                    : 'font-medium text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <p className="text-[11px] text-muted-foreground mb-0.5">{item.label}</p>
-                <p className={`text-xl font-semibold font-mono ${item.color}`}>{item.value}</p>
+                {t.label}
+                <span className={`tnum ml-1.5 text-[10.5px] ${on ? 'text-[var(--brand-ink)]' : 'text-[var(--faint)]'}`}>
+                  {t.count}
+                </span>
               </button>
-            ))}
-          </>
-        )}
-      </div>
+            )
+          })}
+        </div>
 
-      {/* Search + Bulk Actions */}
-      <div className="flex items-center gap-3">
-        <form onSubmit={handleSearch} className="flex-1 flex gap-2">
-          <Input
-            placeholder="書類名で検索..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="max-w-xs h-9 text-sm"
-          />
-          {search && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => { setSearch(''); setSearchInput(''); setPage(1) }}
-              className="text-xs text-muted-foreground"
-            >
-              クリア
-            </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {selected.size > 0 && (
+            <>
+              <span className="text-xs text-muted-foreground">{selected.size}件選択中</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs text-destructive hover:text-destructive"
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                一括削除
+              </Button>
+            </>
           )}
-        </form>
-
-        {selected.size > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{selected.size}件選択中</span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive hover:text-destructive text-xs h-8"
-              onClick={() => setShowDeleteDialog(true)}
-            >
-              一括削除
-            </Button>
-          </div>
-        )}
+          <form onSubmit={handleSearch} className="flex items-center gap-2">
+            <Input
+              placeholder="書類を検索"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="h-8 w-[200px] text-[13px]"
+            />
+            {search && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => { setSearch(''); setSearchInput(''); setPage(1) }}
+                className="h-8 text-xs text-muted-foreground"
+              >
+                クリア
+              </Button>
+            )}
+          </form>
+        </div>
       </div>
 
       {/* Table */}
       {contracts.isLoading ? (
-        <div className="space-y-1.5">
+        <div className="overflow-hidden rounded-lg border bg-card p-4 space-y-3">
           {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-14 w-full" />
+            <Skeleton key={i} className="h-9 w-full" />
           ))}
         </div>
       ) : contracts.data?.items.length === 0 ? (
@@ -218,93 +229,68 @@ export default function ContractsPage() {
         </div>
       ) : (
         <>
-          <div className="rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-lg border bg-card">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
+                <TableRow className="bg-[#FAFBFC] hover:bg-[#FAFBFC]">
                   <TableHead className="w-10">
                     <input
                       type="checkbox"
                       checked={selected.size === (contracts.data?.items.length ?? 0) && selected.size > 0}
                       onChange={toggleAll}
-                      className="w-3.5 h-3.5 rounded border-gray-300"
+                      className="h-3.5 w-3.5 rounded border-[var(--line-strong)] accent-[var(--primary)]"
                     />
                   </TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground">タイトル</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-24">ステータス</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-24">署名者</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-32">添付ファイル</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-28">作成日</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-28">最終更新</TableHead>
-                  <TableHead className="w-16"></TableHead>
+                  <TableHead className="text-[11px] font-semibold text-muted-foreground">書類名</TableHead>
+                  <TableHead className="w-[130px] text-[11px] font-semibold text-muted-foreground">署名</TableHead>
+                  <TableHead className="w-[100px] text-[11px] font-semibold text-muted-foreground">状態</TableHead>
+                  <TableHead className="w-[110px] text-[11px] font-semibold text-muted-foreground">更新</TableHead>
+                  <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {contracts.data?.items.map((c) => {
-                  const config = statusConfig[c.status]
                   const sc = c.signerCount
+                  const danger = c.status === 'expired' || c.status === 'cancelled'
                   return (
-                    <TableRow key={c.id} className="group">
-                      <TableCell>
+                    <TableRow key={c.id} className="group h-12 hover:bg-[#FAFBFC]">
+                      <TableCell className="py-0">
                         <input
                           type="checkbox"
                           checked={selected.has(c.id)}
                           onChange={() => toggleSelect(c.id)}
-                          className="w-3.5 h-3.5 rounded border-gray-300"
+                          className="h-3.5 w-3.5 rounded border-[var(--line-strong)] accent-[var(--primary)]"
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="py-0">
                         <Link
                           href={`/contracts/${c.id}`}
-                          className="text-sm font-medium text-foreground hover:text-primary transition-colors"
+                          className="text-[13px] font-medium text-foreground transition-colors hover:text-primary"
                         >
                           {c.title}
+                          {c.pdfName && (
+                            <span className="ml-2 text-[11px] font-normal text-[var(--faint)]">{c.pdfName}</span>
+                          )}
                         </Link>
                       </TableCell>
-                      <TableCell>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] border ${config.className}`}>
-                          {config.label}
-                        </span>
+                      <TableCell className="py-0">
+                        <SignProgress signed={sc.signed} total={sc.total} danger={danger} />
                       </TableCell>
-                      <TableCell>
-                        {sc.total > 0 ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden max-w-[40px]">
-                              <div
-                                className="h-full bg-emerald-500 rounded-full"
-                                style={{ width: `${(sc.signed / sc.total) * 100}%` }}
-                              />
-                            </div>
-                            <span className="text-xs text-muted-foreground font-mono">
-                              {sc.signed}/{sc.total}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">-</span>
-                        )}
+                      <TableCell className="py-0">
+                        <StatusBadge status={c.status} />
                       </TableCell>
-                      <TableCell>
-                        {c.pdfName ? (
-                          <span className="text-xs text-muted-foreground truncate block max-w-[120px]">{c.pdfName}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">-</span>
-                        )}
+                      <TableCell className="py-0 text-[12px] text-muted-foreground">
+                        <UpdatedAt iso={c.updatedAt} />
                       </TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-[11px]">
-                        {new Date(c.createdAt).toLocaleDateString('ja-JP')}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-[11px]">
-                        {new Date(c.updatedAt).toLocaleDateString('ja-JP')}
-                      </TableCell>
-                      <TableCell>
+                      <TableCell className="py-0">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="h-7 w-7 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
                             >
-                              ...
+                              ⋯
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
@@ -323,14 +309,6 @@ export default function ContractsPage() {
                               >
                                 送信を取り消す
                               </DropdownMenuItem>
-                            )}
-                            {c.pdfName && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem asChild>
-                                  <a href={`/contracts/${c.id}`}>PDFを表示</a>
-                                </DropdownMenuItem>
-                              </>
                             )}
                             {c.status === 'draft' && (
                               <>
@@ -356,8 +334,8 @@ export default function ContractsPage() {
           {/* Pagination */}
           {contracts.data && contracts.data.totalPages > 1 && (
             <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">
-                {contracts.data.total}件中 {(page - 1) * 20 + 1}-{Math.min(page * 20, contracts.data.total)}件
+              <p className="tnum text-xs text-muted-foreground">
+                {contracts.data.total}件中 {(page - 1) * 20 + 1}–{Math.min(page * 20, contracts.data.total)}件
               </p>
               <div className="flex gap-1">
                 <Button
@@ -374,12 +352,12 @@ export default function ContractsPage() {
                   .map((p, idx, arr) => (
                     <span key={p} className="flex items-center">
                       {idx > 0 && arr[idx - 1] !== p - 1 && (
-                        <span className="px-1 text-xs text-muted-foreground">...</span>
+                        <span className="px-1 text-xs text-muted-foreground">…</span>
                       )}
                       <Button
                         variant={p === page ? 'default' : 'outline'}
                         size="sm"
-                        className="h-8 w-8 text-xs p-0"
+                        className="tnum h-8 w-8 p-0 text-xs"
                         onClick={() => setPage(p)}
                       >
                         {p}
@@ -429,6 +407,7 @@ export default function ContractsPage() {
             <AlertDialogTitle>{selected.size}件の書類を削除しますか？</AlertDialogTitle>
             <AlertDialogDescription>
               選択した書類と関連データが全て削除されます。この操作は取り消せません。
+              （下書き以外は記録保持のため削除されません）
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -437,7 +416,7 @@ export default function ContractsPage() {
               onClick={() => bulkDelete.mutate({ ids: Array.from(selected) })}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {bulkDelete.isPending ? '削除中...' : '削除する'}
+              {bulkDelete.isPending ? '削除中…' : '削除する'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

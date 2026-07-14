@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-const NAVY = '#3d4f5f'
+const NAVY = '#2680EB'
 
 // 法務ページ共通の枠（LPと同じヘッダー・フッター）
 export function LegalShell({ title, updatedAt, children }: { title: string; updatedAt?: string; children: React.ReactNode }) {
