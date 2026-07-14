@@ -303,6 +303,100 @@ export const contractsRouter = router({
       return { id: contractId }
     }),
 
+  // 契約を複製して新しい下書きを作成（PDF・署名欄・署名者を引き継ぐ）。
+  // 「送信済みを訂正して送り直す」= 元を取り消し → 複製 → 該当箇所だけ修正 → 再送、の中核。
+  // 新契約は必ず draft。送信/署名/締結の状態・署名データ・署名日時は一切引き継がない。
+  duplicate: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const allowed = await hasActiveSubscription(ctx.db, ctx.user)
+      if (!allowed) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'パートナープランへの登録が必要です', cause: 'SUBSCRIPTION_REQUIRED' })
+      }
+      const src = await assertContractOwner(ctx.db, input.id, ctx.user.id)
+
+      const newId = ulid()
+      // 元PDFを新契約のストレージにコピー（元の原本を共有せず独立させる）
+      let pdfUrl: string | null = null
+      if (src.pdfUrl) {
+        try {
+          const buf = await downloadPdf(src.pdfUrl)
+          pdfUrl = await uploadPdfToPath(buf, `contracts/${newId}/original.pdf`)
+        } catch (err) {
+          console.error('[duplicate] PDFコピー失敗:', err)
+        }
+      }
+
+      await ctx.db.insert(contracts).values({
+        id: newId,
+        title: `${src.title}のコピー`,
+        pdfUrl,
+        pdfName: src.pdfName,
+        pdfSize: src.pdfSize,
+        message: src.message,
+        expiresAt: null, // 期限は再設定させる
+        createdBy: ctx.user.id,
+      })
+
+      // 署名者をコピー（宛先・氏名・順番・アクセスコードは引き継ぎ、状態/署名日時/トークンはリセット）。
+      // 旧signerId → 新signerId のマップを作り、署名欄の紐付けに使う。
+      const srcSigners = await ctx.db
+        .select()
+        .from(contractSigners)
+        .where(eq(contractSigners.contractId, src.id))
+        .orderBy(contractSigners.signOrder)
+      const idMap = new Map<string, string>()
+      if (srcSigners.length > 0) {
+        const rows = srcSigners.map((s) => {
+          const nid = ulid()
+          idMap.set(s.id, nid)
+          return {
+            id: nid,
+            contractId: newId,
+            email: s.email,
+            name: s.name,
+            role: s.role,
+            signOrder: s.signOrder,
+            token: ulid(),
+            accessCode: s.accessCode,
+            // status/signedAt/declineReason/viewedAt/accessAttempts/lockedUntil はデフォルトで初期化
+          }
+        })
+        await ctx.db.insert(contractSigners).values(rows)
+      }
+
+      // 署名欄（座標配置）をコピー。signature_fields に署名データ列は無いため座標のみ引き継ぐ。
+      const srcFields = await ctx.db
+        .select()
+        .from(signatureFields)
+        .where(eq(signatureFields.contractId, src.id))
+      if (srcFields.length > 0) {
+        await ctx.db.insert(signatureFields).values(
+          srcFields.map((f) => ({
+            id: ulid(),
+            contractId: newId,
+            signerId: f.signerId ? idMap.get(f.signerId) ?? null : null,
+            signerOrder: f.signerOrder,
+            fieldType: f.fieldType,
+            label: f.label,
+            page: f.page,
+            x: f.x, y: f.y, width: f.width, height: f.height,
+            required: f.required,
+          })),
+        )
+      }
+
+      await ctx.db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: newId,
+        action: 'created',
+        actorEmail: ctx.user.email,
+        detail: `書類「${src.title}」を複製して作成しました`,
+      })
+
+      return { id: newId }
+    }),
+
   update: protectedProcedure
     .input(z.object({
       id: z.string(),
@@ -390,6 +484,12 @@ export const contractsRouter = router({
   cancel: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // 送信中（sent/signing）のみ取消可。締結済み・下書き・取消済み・期限切れは不可。
+      // UIの canCancel と同じ不変条件をサーバーでも保証する（API直叩き対策）。
+      const contract = await assertContractOwner(ctx.db, input.id, ctx.user.id)
+      if (contract.status !== 'sent' && contract.status !== 'signing') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '送信中の書類のみ取り消せます' })
+      }
       const now = new Date()
       await ctx.db
         .update(contracts)
