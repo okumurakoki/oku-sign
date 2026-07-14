@@ -43,12 +43,12 @@ export default function BillingPage() {
     <div className="max-w-2xl space-y-6">
       <div>
         <Link href="/settings" className="text-xs text-muted-foreground hover:text-foreground">← 設定に戻る</Link>
-        <h1 className="mt-1 text-lg font-semibold">プラン・お支払い</h1>
+        <h1 className="mt-1 text-lg font-bold tracking-tight">プラン・お支払い</h1>
       </div>
 
       {getStripeMode() !== 'live' && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2">
-          <p className="text-xs text-amber-800">テストモード（実際の請求は発生しません）</p>
+        <div className="rounded-md bg-[var(--wait-bg)] px-4 py-2">
+          <p className="text-xs font-medium text-[var(--wait)]">テストモード（実際の請求は発生しません）</p>
         </div>
       )}
 
@@ -56,7 +56,7 @@ export default function BillingPage() {
       {s?.isOwner ? (
         <div className="rounded-lg border bg-card p-6">
           <div className="flex items-center gap-2">
-            <Check className="text-emerald-600" size={18} />
+            <Check className="text-[var(--ok)]" size={18} />
             <p className="text-sm font-medium">自社利用プラン（無料）</p>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">オーナーアカウントは課金なしで全機能を利用できます。</p>
@@ -67,7 +67,7 @@ export default function BillingPage() {
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <Check className="text-emerald-600" size={18} />
+                <Check className="text-[var(--ok)]" size={18} />
                 <p className="text-sm font-medium">okuサイン パートナープラン</p>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -76,7 +76,7 @@ export default function BillingPage() {
                   : `月額 ¥${s.plans.monthly.amount.toLocaleString()}`}
               </p>
             </div>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700 border border-emerald-200">
+            <span className="rounded-[5px] bg-[var(--ok-bg)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--ok)]">
               利用中
             </span>
           </div>
@@ -110,9 +110,9 @@ export default function BillingPage() {
           <div>
             <p className="text-sm font-medium">okuサイン パートナープラン</p>
             <ul className="mt-3 space-y-1.5 text-sm text-muted-foreground">
-              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 電子契約の送信無制限</li>
-              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 署名欄の自由配置・テンプレート</li>
-              <li className="flex items-center gap-2"><Check size={14} className="text-emerald-600" /> 監査証跡・署名済みPDF</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-[var(--ok)]" /> 電子契約の送信無制限</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-[var(--ok)]" /> 署名欄の自由配置・テンプレート</li>
+              <li className="flex items-center gap-2"><Check size={14} className="text-[var(--ok)]" /> 監査証跡・署名済みPDF</li>
             </ul>
           </div>
 
@@ -133,10 +133,10 @@ export default function BillingPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">{k === 'yearly' ? '年額' : '月額'}</span>
                       {k === 'yearly' && (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 border border-emerald-200">お得</span>
+                        <span className="rounded-[5px] bg-[var(--accent)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--brand-ink)]">2ヶ月分お得</span>
                       )}
                     </div>
-                    <p className="mt-1.5 text-xl font-semibold">
+                    <p className="tnum mt-1.5 text-xl font-bold">
                       ¥{(p?.amount ?? (k === 'yearly' ? 25000 : 2980)).toLocaleString()}
                       <span className="text-xs font-normal text-muted-foreground">{k === 'yearly' ? ' / 年' : ' / 月'}</span>
                     </p>
@@ -150,14 +150,14 @@ export default function BillingPage() {
           )}
 
           {s?.status === 'past_due' && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2">
-              <p className="text-xs text-red-700">お支払いに失敗しています。カード情報を更新してください。</p>
+            <div className="rounded-md bg-[var(--alert-bg)] px-4 py-2">
+              <p className="text-xs font-medium text-[var(--alert)]">お支払いに失敗しています。カード情報を更新してください。</p>
             </div>
           )}
 
           {!stripeConfigured ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
-              <p className="text-xs text-amber-800">決済機能は準備中です。しばらくお待ちください。</p>
+            <div className="rounded-md bg-[var(--wait-bg)] px-4 py-3">
+              <p className="text-xs font-medium text-[var(--wait)]">決済機能は準備中です。しばらくお待ちください。</p>
             </div>
           ) : !clientSecret ? (
             <>
