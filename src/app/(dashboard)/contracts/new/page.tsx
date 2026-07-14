@@ -193,12 +193,12 @@ function NewContractForm() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">書類の送信</h1>
+        <h1 className="text-lg font-bold tracking-tight">書類の送信</h1>
         {templateId && template.data && (
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="mt-0.5 text-sm text-muted-foreground">
             テンプレート「{template.data.title}」から作成
           </p>
         )}

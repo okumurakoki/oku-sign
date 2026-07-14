@@ -47,13 +47,8 @@ export default function SettingsPage() {
   )
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">設定</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          アカウントとサービスの各種設定を管理します
-        </p>
-      </div>
+    <div className="space-y-4">
+      <h1 className="text-lg font-bold tracking-tight">設定</h1>
 
       <div className="grid grid-cols-12 gap-5">
         {/* Settings Content */}
@@ -212,7 +207,7 @@ export default function SettingsPage() {
                       <input
                         type="checkbox"
                         defaultChecked={item.defaultChecked}
-                        className="w-4 h-4 rounded border-gray-300 mt-0.5"
+                        className="mt-0.5 h-4 w-4 rounded border-[var(--line-strong)] accent-[var(--primary)]"
                       />
                     </div>
                   ))}

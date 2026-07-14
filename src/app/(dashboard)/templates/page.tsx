@@ -97,15 +97,10 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">テンプレート</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            よく使う書類のテンプレートを登録して、書類作成を効率化できます
-          </p>
-        </div>
+        <h1 className="text-lg font-bold tracking-tight">テンプレート</h1>
         <Button size="sm" onClick={() => { resetForm(); setShowCreate(true) }}>
           テンプレートを作成
         </Button>
@@ -129,54 +124,50 @@ export default function TemplatesPage() {
           </Button>
         </div>
       ) : (
-        <div className="rounded-lg border bg-card">
+        <div className="overflow-hidden rounded-lg border bg-card">
           <Table>
             <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="text-xs font-normal text-muted-foreground">テンプレート名</TableHead>
-                <TableHead className="text-xs font-normal text-muted-foreground w-40">添付ファイル</TableHead>
-                <TableHead className="text-xs font-normal text-muted-foreground w-20 text-center">使用回数</TableHead>
-                <TableHead className="text-xs font-normal text-muted-foreground w-28">更新日</TableHead>
-                <TableHead className="w-28"></TableHead>
+              <TableRow className="bg-[#FAFBFC] hover:bg-[#FAFBFC]">
+                <TableHead className="text-[11px] font-semibold text-muted-foreground">テンプレート名</TableHead>
+                <TableHead className="w-40 text-[11px] font-semibold text-muted-foreground">添付ファイル</TableHead>
+                <TableHead className="w-20 text-center text-[11px] font-semibold text-muted-foreground">使用回数</TableHead>
+                <TableHead className="w-28 text-[11px] font-semibold text-muted-foreground">更新日</TableHead>
+                <TableHead className="w-[190px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {templates.data?.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell>
-                    <div>
-                      <p className="text-sm font-medium">{t.title}</p>
+                <TableRow key={t.id} className="group h-12 hover:bg-[#FAFBFC]">
+                  <TableCell className="py-0">
+                    <p className="text-[13px] font-medium">
+                      {t.title}
                       {t.description && (
-                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-[300px]">
-                          {t.description}
-                        </p>
+                        <span className="ml-2 text-[11px] font-normal text-[var(--faint)]">{t.description}</span>
                       )}
-                    </div>
+                    </p>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="py-0">
                     {t.pdfName ? (
-                      <div>
-                        <p className="text-xs truncate max-w-[130px]">{t.pdfName}</p>
-                        {t.pdfSize && (
-                          <p className="text-[10px] text-muted-foreground">{formatBytes(t.pdfSize)}</p>
-                        )}
-                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {t.pdfName}
+                        {t.pdfSize && <span className="tnum ml-1.5 text-[10.5px] text-[var(--faint)]">{formatBytes(t.pdfSize)}</span>}
+                      </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
+                      <span className="text-xs text-[var(--faint)]">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-center">
-                    <span className="text-xs font-mono text-muted-foreground">{t.usageCount}</span>
+                  <TableCell className="py-0 text-center">
+                    <span className="tnum text-xs text-muted-foreground">{t.usageCount}</span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-[11px]">
+                  <TableCell className="tnum py-0 text-[12px] text-muted-foreground">
                     {new Date(t.updatedAt).toLocaleDateString('ja-JP')}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
+                  <TableCell className="py-0">
+                    <div className="flex items-center justify-end gap-1">
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        className="h-7 text-[11px]"
+                        className="h-7 text-[11.5px]"
                         onClick={() => handleUseTemplate(t.id)}
                       >
                         この書類で送信
@@ -184,7 +175,7 @@ export default function TemplatesPage() {
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground">
-                            ...
+                            ⋯
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
