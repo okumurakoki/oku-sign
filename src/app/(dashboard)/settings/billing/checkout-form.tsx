@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button'
 interface Props {
   onSuccess: () => void
   amount: number
+  interval?: 'monthly' | 'yearly'
 }
 
 // PaymentElementでアプリ内完結（Checkoutリダイレクトは使わない）
-export function CheckoutForm({ onSuccess, amount }: Props) {
+export function CheckoutForm({ onSuccess, amount, interval = 'monthly' }: Props) {
   const stripe = useStripe()
   const elements = useElements()
   const [submitting, setSubmitting] = useState(false)
@@ -41,10 +42,10 @@ export function CheckoutForm({ onSuccess, amount }: Props) {
       <PaymentElement />
       {error && <p className="text-sm text-red-600">{error}</p>}
       <Button type="submit" className="w-full h-11" disabled={!stripe || submitting}>
-        {submitting ? '処理中...' : `月額 ¥${amount.toLocaleString()} で登録する`}
+        {submitting ? '処理中...' : `${interval === 'yearly' ? '年額' : '月額'} ¥${amount.toLocaleString()} で登録する`}
       </Button>
       <p className="text-[11px] text-muted-foreground text-center">
-        いつでも解約できます。解約後は当月末まで利用可能です。
+        いつでも解約できます。解約後は{interval === 'yearly' ? '当年度末' : '当月末'}まで利用可能です。
       </p>
     </form>
   )

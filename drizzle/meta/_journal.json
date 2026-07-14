@@ -36,6 +36,13 @@
       "when": 1783960993559,
       "tag": "0004_shallow_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784006109649,
+      "tag": "0005_condemned_tyrannus",
+      "breakpoints": true
     }
   ]
 }

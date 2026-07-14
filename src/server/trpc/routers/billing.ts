@@ -3,7 +3,8 @@ import { TRPCError } from '@trpc/server'
 import { subscriptions } from '@/server/db/schema'
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
-import { getStripe, ensurePartnerProductId, PARTNER_PLAN } from '@/server/stripe'
+import { z } from 'zod/v4'
+import { getStripe, ensurePartnerProductId, PARTNER_PLANS } from '@/server/stripe'
 import type { Context } from '@/server/trpc/context'
 
 const ACTIVE_STATUSES = ['active', 'trialing']
@@ -24,16 +25,23 @@ export const billingRouter = router({
       status: sub?.status ?? null,
       currentPeriodEnd: sub?.currentPeriodEnd ?? null,
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
-      plan: { name: PARTNER_PLAN.name, amount: PARTNER_PLAN.amount },
+      currentPlan: sub?.plan ?? null,
+      plans: {
+        monthly: { amount: PARTNER_PLANS.monthly.amount, label: PARTNER_PLANS.monthly.label },
+        yearly: { amount: PARTNER_PLANS.yearly.amount, label: PARTNER_PLANS.yearly.label },
+      },
     }
   }),
 
   // サブスクを開始（Elements: price_data直接・Price ID不要）。client_secretを返す。
-  createSubscription: protectedProcedure.mutation(async ({ ctx }) => {
+  createSubscription: protectedProcedure
+    .input(z.object({ plan: z.enum(['monthly', 'yearly']).default('monthly') }))
+    .mutation(async ({ ctx, input }) => {
     if (ctx.user.isOwner) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'オーナーは課金不要です' })
     }
 
+    const selectedPlan = PARTNER_PLANS[input.plan]
     const stripe = getStripe()
 
     // 既存サブスクの確認
@@ -69,10 +77,10 @@ export const billingRouter = router({
         customer: customerId,
         items: [{
           price_data: {
-            currency: PARTNER_PLAN.currency,
+            currency: selectedPlan.currency,
             product: productId,
-            unit_amount: PARTNER_PLAN.amount,
-            recurring: { interval: PARTNER_PLAN.interval },
+            unit_amount: selectedPlan.amount,
+            recurring: { interval: selectedPlan.interval },
           },
         }],
         payment_behavior: 'default_incomplete',
@@ -92,6 +100,7 @@ export const billingRouter = router({
           stripeCustomerId: customerId,
           stripeSubscriptionId: subscription.id,
           status: subscription.status as typeof subscriptions.$inferInsert.status,
+          plan: input.plan,
           updatedAt: now,
         })
         .where(eq(subscriptions.userId, ctx.user.id))
@@ -102,6 +111,7 @@ export const billingRouter = router({
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscription.id,
         status: subscription.status as typeof subscriptions.$inferInsert.status,
+        plan: input.plan,
       })
     }
 

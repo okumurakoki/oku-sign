@@ -36,12 +36,28 @@ export function getStripe(): Stripe {
   return _stripe
 }
 
-export const PARTNER_PLAN = {
-  name: 'okuサイン パートナープラン',
-  amount: 2980, // JPY / 月（税込想定）
-  currency: 'jpy',
-  interval: 'month' as const,
-}
+// パートナープラン（月額・年額）。金額はここ1箇所で管理する。
+export const PARTNER_PLANS = {
+  monthly: {
+    key: 'monthly' as const,
+    label: '月額プラン',
+    amount: 2980,        // JPY / 月（税込想定）
+    currency: 'jpy',
+    interval: 'month' as const,
+  },
+  yearly: {
+    key: 'yearly' as const,
+    label: '年額プラン',
+    amount: 25000,       // JPY / 年（月額換算 約2,083円・約30%お得）
+    currency: 'jpy',
+    interval: 'year' as const,
+  },
+} as const
+
+export type PlanKey = keyof typeof PARTNER_PLANS
+
+// 商品名（Product）は共通。価格(price_data)で月額/年額を切り替える。
+export const PARTNER_PRODUCT_NAME = 'okuサイン パートナープラン'
 
 // price_data には Product ID が必要（API 2026-06-24 で inline product_data 廃止）。
 // Price ID は依然不要。Product を冪等に確保して ID を返す（プロセス内キャッシュ）。
@@ -50,7 +66,7 @@ export async function ensurePartnerProductId(): Promise<string> {
   if (_productId) return _productId
   const stripe = getStripe()
   const product = await stripe.products.create(
-    { name: PARTNER_PLAN.name, metadata: { plan: 'oku-sign-partner-v1' } },
+    { name: PARTNER_PRODUCT_NAME, metadata: { plan: 'oku-sign-partner-v1' } },
     { idempotencyKey: 'product-oku-sign-partner-v1' },
   )
   _productId = product.id

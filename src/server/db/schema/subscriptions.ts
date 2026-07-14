@@ -10,6 +10,7 @@ export const subscriptions = pgTable('subscriptions', {
   status: text('status', {
     enum: ['incomplete', 'active', 'trialing', 'past_due', 'canceled', 'unpaid'],
   }).notNull().default('incomplete'),
+  plan: text('plan', { enum: ['monthly', 'yearly'] }).notNull().default('monthly'),
   currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
   cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

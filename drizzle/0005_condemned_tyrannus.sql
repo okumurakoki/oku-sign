@@ -1,0 +1,1 @@
+ALTER TABLE "subscriptions" ADD COLUMN "plan" text DEFAULT 'monthly' NOT NULL;
