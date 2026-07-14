@@ -97,6 +97,11 @@ export default function ContractDetailPage({
     onSuccess: () => router.push('/contracts'),
   })
 
+  // 複製して新しい下書きを作成 → その下書きの詳細へ遷移（取消→複製→修正→再送の動線）
+  const duplicateContract = trpc.contracts.duplicate.useMutation({
+    onSuccess: (res) => router.push(`/contracts/${res.id}`),
+  })
+
   const sendReminder = trpc.contracts.sendReminder.useMutation({
     onSuccess: () => utils.contracts.getById.invalidate({ id }),
   })
@@ -199,21 +204,27 @@ export default function ContractDetailPage({
               </AlertDialog>
             </>
           )}
-          {(c.status === 'sent' || c.status === 'signing') && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">操作</Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">操作</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => duplicateContract.mutate({ id })}
+                disabled={duplicateContract.isPending}
+              >
+                {duplicateContract.isPending ? '複製しています…' : '複製して下書きを作成'}
+              </DropdownMenuItem>
+              {(c.status === 'sent' || c.status === 'signing') && (
                 <DropdownMenuItem
                   onClick={() => cancelContract.mutate({ id })}
                   className="text-destructive focus:text-destructive"
                 >
                   送信を取り消す
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {c.status === 'completed' && (c.signedPdfUrl || c.pdfSignedUrl) && (
             <a href={c.signedPdfUrl ?? c.pdfSignedUrl ?? undefined} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm">

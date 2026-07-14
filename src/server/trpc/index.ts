@@ -8,6 +8,8 @@ const t = initTRPC.context<Context>().create({
 
 export const router = t.router
 export const publicProcedure = t.procedure
+// サーバー側から手続きを直接呼ぶ（統合テスト等）ためのファクトリ
+export const createCallerFactory = t.createCallerFactory
 
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.user) {
