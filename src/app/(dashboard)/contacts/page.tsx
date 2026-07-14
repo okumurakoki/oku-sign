@@ -110,28 +110,36 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">アドレス帳</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            よく使う署名者を登録して、書類送信時に簡単に追加できます
-          </p>
-        </div>
+        <h1 className="text-lg font-bold tracking-tight">アドレス帳</h1>
         <Button size="sm" onClick={() => { resetForm(); setShowCreate(true) }}>
           連絡先を追加
         </Button>
       </div>
 
-      {/* Search + Actions */}
+      {/* Toolbar */}
       <div className="flex items-center gap-3">
-        <form onSubmit={handleSearch} className="flex-1 flex gap-2">
+        {selected.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{selected.size}件選択中</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs text-destructive hover:text-destructive"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              一括削除
+            </Button>
+          </div>
+        )}
+        <form onSubmit={handleSearch} className="ml-auto flex items-center gap-2">
           <Input
-            placeholder="名前で検索..."
+            placeholder="連絡先を検索"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="max-w-xs h-9 text-sm"
+            className="h-8 w-[200px] text-[13px]"
           />
           {search && (
             <Button
@@ -139,25 +147,12 @@ export default function ContactsPage() {
               variant="ghost"
               size="sm"
               onClick={() => { setSearch(''); setSearchInput(''); setPage(1) }}
-              className="text-xs text-muted-foreground"
+              className="h-8 text-xs text-muted-foreground"
             >
               クリア
             </Button>
           )}
         </form>
-        {selected.size > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{selected.size}件選択中</span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive hover:text-destructive text-xs h-8"
-              onClick={() => setShowDeleteDialog(true)}
-            >
-              一括削除
-            </Button>
-          </div>
-        )}
       </div>
 
       {/* Table */}
@@ -180,54 +175,54 @@ export default function ContactsPage() {
         </div>
       ) : (
         <>
-          <div className="rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-lg border bg-card">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
+                <TableRow className="bg-[#FAFBFC] hover:bg-[#FAFBFC]">
                   <TableHead className="w-10">
                     <input
                       type="checkbox"
                       checked={selected.size === (contactList.data?.items.length ?? 0) && selected.size > 0}
                       onChange={toggleAll}
-                      className="w-3.5 h-3.5 rounded border-gray-300"
+                      className="h-3.5 w-3.5 rounded border-[var(--line-strong)] accent-[var(--primary)]"
                     />
                   </TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground">氏名</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground">メールアドレス</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground">会社名</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-24">部署</TableHead>
-                  <TableHead className="text-xs font-normal text-muted-foreground w-28">登録日</TableHead>
-                  <TableHead className="w-20"></TableHead>
+                  <TableHead className="text-[11px] font-semibold text-muted-foreground">氏名</TableHead>
+                  <TableHead className="text-[11px] font-semibold text-muted-foreground">メールアドレス</TableHead>
+                  <TableHead className="text-[11px] font-semibold text-muted-foreground">会社名</TableHead>
+                  <TableHead className="w-24 text-[11px] font-semibold text-muted-foreground">部署</TableHead>
+                  <TableHead className="w-28 text-[11px] font-semibold text-muted-foreground">登録日</TableHead>
+                  <TableHead className="w-24"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {contactList.data?.items.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
+                  <TableRow key={c.id} className="group h-12 hover:bg-[#FAFBFC]">
+                    <TableCell className="py-0">
                       <input
                         type="checkbox"
                         checked={selected.has(c.id)}
                         onChange={() => toggleSelect(c.id)}
-                        className="w-3.5 h-3.5 rounded border-gray-300"
+                        className="h-3.5 w-3.5 rounded border-[var(--line-strong)] accent-[var(--primary)]"
                       />
                     </TableCell>
-                    <TableCell className="text-sm font-medium">{c.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{c.email}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{c.companyName ?? '-'}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{c.department ?? '-'}</TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-[11px]">
+                    <TableCell className="py-0 text-[13px] font-medium">{c.name}</TableCell>
+                    <TableCell className="py-0 text-[13px] text-muted-foreground">{c.email}</TableCell>
+                    <TableCell className="py-0 text-[13px] text-muted-foreground">{c.companyName ?? <span className="text-[var(--faint)]">—</span>}</TableCell>
+                    <TableCell className="py-0 text-[13px] text-muted-foreground">{c.department ?? <span className="text-[var(--faint)]">—</span>}</TableCell>
+                    <TableCell className="tnum py-0 text-[12px] text-muted-foreground">
                       {new Date(c.createdAt).toLocaleDateString('ja-JP')}
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
+                    <TableCell className="py-0">
+                      <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
                         <button
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => openEdit(c)}
                         >
                           編集
                         </button>
                         <button
-                          className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                          className="text-xs text-muted-foreground transition-colors hover:text-destructive"
                           onClick={() => deleteContact.mutate({ id: c.id })}
                         >
                           削除

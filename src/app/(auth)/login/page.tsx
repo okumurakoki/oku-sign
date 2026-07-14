@@ -50,7 +50,7 @@ function LoginForm() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-10 h-10 rounded-lg bg-[#3d4f5f] flex items-center justify-center mx-auto mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#2680EB] flex items-center justify-center mx-auto mb-3">
             <span className="text-white text-sm font-bold">oku</span>
           </div>
           <h1 className="text-lg font-semibold text-gray-900">okuサイン</h1>
@@ -89,7 +89,7 @@ function LoginForm() {
 
         <p className="text-xs text-gray-500 text-center mt-4">
           アカウントをお持ちでない方は{' '}
-          <Link href="/signup" className="text-[#3d4f5f] font-medium hover:underline">
+          <Link href="/signup" className="text-[#2680EB] font-medium hover:underline">
             新規登録
           </Link>
         </p>
