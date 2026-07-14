@@ -60,7 +60,7 @@ export default function SignupPage() {
             <p className="text-sm text-gray-500">
               {email} 宛に確認メールをお送りしました。メール内のリンクを開くと登録が完了します。
             </p>
-            <Link href="/login" className="inline-block text-sm text-[#3d4f5f] font-medium hover:underline">
+            <Link href="/login" className="inline-block text-sm text-[#2680EB] font-medium hover:underline">
               ログイン画面へ
             </Link>
           </div>
@@ -73,7 +73,7 @@ export default function SignupPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-10 h-10 rounded-lg bg-[#3d4f5f] flex items-center justify-center mx-auto mb-3">
+          <div className="w-10 h-10 rounded-lg bg-[#2680EB] flex items-center justify-center mx-auto mb-3">
             <span className="text-white text-sm font-bold">oku</span>
           </div>
           <h1 className="text-lg font-semibold text-gray-900">okuサイン</h1>
@@ -134,7 +134,7 @@ export default function SignupPage() {
 
         <p className="text-xs text-gray-500 text-center mt-4">
           既にアカウントをお持ちの方は{' '}
-          <Link href="/login" className="text-[#3d4f5f] font-medium hover:underline">
+          <Link href="/login" className="text-[#2680EB] font-medium hover:underline">
             ログイン
           </Link>
         </p>

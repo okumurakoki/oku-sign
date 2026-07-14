@@ -42,9 +42,13 @@ export const dashboardRouter = router({
     return {
       total,
       draft: statsMap.draft ?? 0,
+      // sent は互換のため「進行中の合算(sent+signing)」を維持。内訳が要る画面は sentOnly / signing を使う
       sent: (statsMap.sent ?? 0) + (statsMap.signing ?? 0),
+      sentOnly: statsMap.sent ?? 0,
+      signing: statsMap.signing ?? 0,
       completed: statsMap.completed ?? 0,
       cancelled: statsMap.cancelled ?? 0,
+      expired: statsMap.expired ?? 0,
       contacts: contactCount.count,
       thisMonth: monthCount.count,
     }

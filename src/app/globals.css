@@ -7,8 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --font-sans: "Geist", "Geist Fallback", -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", "Noto Sans JP", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, "SF Mono", Menlo, monospace;
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -49,38 +49,51 @@
 }
 
 :root {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.205 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.205 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.205 0 0);
-  --primary: oklch(0.45 0.08 250);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.965 0.005 250);
-  --secondary-foreground: oklch(0.35 0.06 250);
-  --muted: oklch(0.96 0 0);
-  --muted-foreground: oklch(0.50 0 0);
-  --accent: oklch(0.955 0.01 250);
-  --accent-foreground: oklch(0.35 0.06 250);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0 0);
-  --input: oklch(0.91 0 0);
-  --ring: oklch(0.45 0.08 250);
-  --chart-1: oklch(0.45 0.08 250);
-  --chart-2: oklch(0.55 0.12 160);
-  --chart-3: oklch(0.65 0.15 45);
-  --chart-4: oklch(0.60 0.10 300);
-  --chart-5: oklch(0.50 0.10 20);
+  /* freee Vibes型 — 高密度・罫線区切り・テーブル主役。青は操作/リンク/アクティブ専用 */
+  --background: #F7F8FA;
+  --foreground: #1A1D24;
+  --card: #FFFFFF;
+  --card-foreground: #1A1D24;
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1D24;
+  --primary: #2680EB;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EDF3FE;
+  --secondary-foreground: #1B5FC4;
+  --muted: #EFF1F4;
+  --muted-foreground: #667085;
+  --accent: #EDF3FE;
+  --accent-foreground: #1B5FC4;
+  --destructive: #C4362F;
+  --border: #E6E8EC;
+  --input: #E6E8EC;
+  --ring: #2680EB;
+  --chart-1: #2680EB;
+  --chart-2: #12805C;
+  --chart-3: #B4690E;
+  --chart-4: #14B8C4;
+  --chart-5: #C4362F;
   --radius: 0.5rem;
-  --sidebar: oklch(0.97 0.005 250);
-  --sidebar-foreground: oklch(0.30 0.02 250);
-  --sidebar-primary: oklch(0.45 0.08 250);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.93 0.015 250);
-  --sidebar-accent-foreground: oklch(0.30 0.02 250);
-  --sidebar-border: oklch(0.90 0.005 250);
-  --sidebar-ring: oklch(0.45 0.08 250);
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #586074;
+  --sidebar-primary: #2680EB;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EDF3FE;
+  --sidebar-accent-foreground: #1B5FC4;
+  --sidebar-border: #E6E8EC;
+  --sidebar-ring: #2680EB;
+
+  /* 補助トーン */
+  --line-strong: #D8DBE0; /* 強罫線（ボタン枠等） */
+  --line-soft: #EFF1F4;   /* 行区切りの弱罫線 */
+  --faint: #98A0AE;       /* 補足テキスト */
+
+  /* 機能色（状態バッジ）: 薄地 + 濃文字。進捗バーにも同じ色を使う */
+  --ok: #12805C; --ok-bg: #E3F3EC;
+  --wait: #B4690E; --wait-bg: #FBF0DE;
+  --alert: #C4362F; --alert-bg: #FBE9E8;
+  --slate: #5A6473; --slate-bg: #EEF0F3;
+  --brand-ink: #1B5FC4;
 }
 
 @layer base {
@@ -92,5 +105,8 @@
   }
   html {
     @apply font-sans;
+    font-feature-settings: "palt" 1;
   }
+  /* 数字が縦にそろう箇所は等幅に */
+  .tnum { font-variant-numeric: tabular-nums; }
 }

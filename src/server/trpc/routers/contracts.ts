@@ -539,6 +539,7 @@ export const contractsRouter = router({
       email: z.string().email(),
       name: z.string().min(1),
       signOrder: z.number().int().min(1),
+      accessCode: z.string().max(50).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const contract = await assertContractOwner(ctx.db, input.contractId, ctx.user.id)
@@ -555,6 +556,7 @@ export const contractsRouter = router({
         signOrder: input.signOrder,
         role: 'signer',
         token: ulid(),
+        accessCode: input.accessCode || null,
       })
 
       await ctx.db.insert(auditLogs).values({
