@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { trpc } from '@/lib/trpc'
 import { Button } from '@/components/ui/button'
@@ -23,16 +23,13 @@ export default function SettingsPage() {
     },
   })
 
-  const [name, setName] = useState('')
-  const [companyName, setCompanyName] = useState('')
+  // 未編集はnullにしてプロフィール値を表示（effectでのsetState同期を避ける）
+  const [nameEdit, setNameEdit] = useState<string | null>(null)
+  const [companyNameEdit, setCompanyNameEdit] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  useEffect(() => {
-    if (profile.data) {
-      setName(profile.data.name)
-      setCompanyName(profile.data.companyName ?? '')
-    }
-  }, [profile.data])
+  const name = nameEdit ?? profile.data?.name ?? ''
+  const companyName = companyNameEdit ?? profile.data?.companyName ?? ''
 
   const handleSave = () => {
     updateProfile.mutate({
@@ -84,7 +81,7 @@ export default function SettingsPage() {
                           <Input
                             id="name"
                             value={name}
-                            onChange={(e) => setName(e.target.value)}
+                            onChange={(e) => setNameEdit(e.target.value)}
                             placeholder="山田 太郎"
                           />
                         </div>
@@ -93,7 +90,7 @@ export default function SettingsPage() {
                           <Input
                             id="company"
                             value={companyName}
-                            onChange={(e) => setCompanyName(e.target.value)}
+                            onChange={(e) => setCompanyNameEdit(e.target.value)}
                             placeholder="株式会社サンプル"
                           />
                         </div>
