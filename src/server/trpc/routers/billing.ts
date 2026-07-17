@@ -106,8 +106,18 @@ export const billingRouter = router({
         // incomplete_expired / canceled は回収済み扱いでそのまま新規作成へ
       } catch (err) {
         if (err instanceof TRPCError) throw err
-        // retrieve失敗（削除済み等）は新規作成にフォールバック
-        reportError(err, { scope: 'billing:retrievePriorSubscription', userId: ctx.user.id })
+        // fail-closed: Stripe一時障害やタイムアウトで既存subの状態が不明のまま
+        // 新規作成へ進むと、既存がactiveだった場合に二重課金になる。
+        // 明示的な resource_missing（削除済み）だけを新規作成にフォールバックする
+        const isMissing = typeof err === 'object' && err !== null &&
+          (err as { code?: string }).code === 'resource_missing'
+        if (!isMissing) {
+          reportError(err, { scope: 'billing:retrievePriorSubscription', userId: ctx.user.id })
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: '決済情報の確認に失敗しました。時間をおいて再度お試しください',
+          })
+        }
       }
     }
 
@@ -128,7 +138,10 @@ export const billingRouter = router({
           expand: ['latest_invoice.confirmation_secret'],
           metadata: { userId: ctx.user.id },
         },
-        { idempotencyKey: `subscription-create-${ctx.user.id}-${input.plan}-${existing?.stripeSubscriptionId ?? 'new'}` },
+        // keyにplanを含めない: 同じ世代(直前のsub id)からの作成は1本に固定する。
+        // 月額/年額を並行要求しても、後着は同key・異パラメータでStripeが
+        // idempotency_errorを返すため、2本のsubが同時に生まれることはない
+        { idempotencyKey: `subscription-create-${ctx.user.id}-${existing?.stripeSubscriptionId ?? 'first'}` },
       )
     }
 

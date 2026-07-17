@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/server/db'
 import { contracts, contractSigners, auditLogs, users } from '@/server/db/schema'
-import { and, eq, inArray, or, isNull, lt } from 'drizzle-orm'
+import { and, eq, inArray, or, isNull, lt, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { reminderEmail } from '@/server/email/templates'
@@ -68,13 +68,16 @@ export async function GET(request: NextRequest) {
       .limit(1)
 
     // 送信前に lastReminderAt を条件付きUPDATEでclaimする。並行cronの両方が
-    // 同じ判定を通ってもUPDATEの再評価でどちらか一方だけが送信権を得る
+    // 同じ判定を通ってもUPDATEの再評価でどちらか一方だけが送信権を得る。
+    // 選択後に署名/辞退/取消が起きた競合も、status条件と契約状態のEXISTSで弾く
     const claimed = await db
       .update(contractSigners)
       .set({ lastReminderAt: now })
       .where(and(
         eq(contractSigners.id, current.id),
+        inArray(contractSigners.status, ['notified', 'viewed']),
         or(isNull(contractSigners.lastReminderAt), lt(contractSigners.lastReminderAt, threshold)),
+        sql`EXISTS (SELECT 1 FROM ${contracts} WHERE ${contracts.id} = ${contract.id} AND ${contracts.status} IN ('sent', 'signing'))`,
       ))
       .returning({ id: contractSigners.id })
     if (claimed.length === 0) continue

@@ -53,32 +53,6 @@ export default async function SignPage({
     )
   }
 
-  // Record view if first time（pending/notified の初回アクセスで viewed に）。
-  // アクセスコード付きはコード検証後（/api/sign unlock）に記録するためここでは記録しない
-  if (!signer.accessCode && (signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
-    const viewedClaim = await db
-      .update(contractSigners)
-      .set({ status: 'viewed', viewedAt: new Date() })
-      .where(and(
-        eq(contractSigners.id, signer.id),
-        inArray(contractSigners.status, ['pending', 'notified']),
-        isNull(contractSigners.viewedAt),
-      ))
-      .returning({ id: contractSigners.id })
-    if (viewedClaim.length > 0) {
-      const h = await headers()
-      await db.insert(auditLogs).values({
-        id: ulid(),
-        contractId: signer.contractId,
-        action: 'viewed',
-        actorEmail: signer.email,
-        detail: `${signer.name}が書類を閲覧しました`,
-        ipAddress: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? 'unknown',
-        userAgent: h.get('user-agent') ?? 'unknown',
-      })
-    }
-  }
-
   // Contract cancelled
   if (contract.status === 'cancelled') {
     return (
@@ -125,6 +99,34 @@ export default async function SignPage({
         </div>
       </div>
     )
+  }
+
+  // Record view if first time（pending/notified の初回アクセスで viewed に）。
+  // 取消・処理済みの分岐より後に置く: 取消済みリンクを開いただけで
+  // 「書類を閲覧しました」という監査証跡を作らない（実際は取消画面しか出ない）。
+  // アクセスコード付きはコード検証後（/api/sign unlock）に記録するためここでは記録しない
+  if (!signer.accessCode && (signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
+    const viewedClaim = await db
+      .update(contractSigners)
+      .set({ status: 'viewed', viewedAt: new Date() })
+      .where(and(
+        eq(contractSigners.id, signer.id),
+        inArray(contractSigners.status, ['pending', 'notified']),
+        isNull(contractSigners.viewedAt),
+      ))
+      .returning({ id: contractSigners.id })
+    if (viewedClaim.length > 0) {
+      const h = await headers()
+      await db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: signer.contractId,
+        action: 'viewed',
+        actorEmail: signer.email,
+        detail: `${signer.name}が書類を閲覧しました`,
+        ipAddress: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? 'unknown',
+        userAgent: h.get('user-agent') ?? 'unknown',
+      })
+    }
   }
 
   // Get sender info

@@ -518,10 +518,18 @@ export const contractsRouter = router({
       } catch (err) {
         // 依頼メールが届いていないのにsentのままだと誰も署名できず放置される。
         // draftへ戻して送信者に失敗を見せ、再送信で回復できるようにする。
+        // ただし戻すのは「この呼び出しがsentにした行」だけ（status+sentAt一致）。
+        // 条件なしで戻すと、メール受理後のタイムアウトや並行取消のcancelledまで
+        // draftへ巻き戻し、署名進行中の契約を編集・削除可能にしてしまう
         await ctx.db
           .update(contracts)
           .set({ status: 'draft', sentAt: null, updatedAt: new Date() })
-          .where(eq(contracts.id, input.id))
+          .where(and(
+            eq(contracts.id, input.id),
+            eq(contracts.createdBy, ctx.user.id),
+            eq(contracts.status, 'sent'),
+            eq(contracts.sentAt, now),
+          ))
         throw new Error(`署名依頼メールの送信に失敗しました。時間をおいて再度お試しください`, { cause: err })
       }
 

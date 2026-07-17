@@ -357,7 +357,34 @@ export async function POST(request: NextRequest) {
       .select()
       .from(contractSigners)
       .where(eq(contractSigners.contractId, signer.contractId))
-    return { outcome: 'signed' as const, allSigners }
+
+    // 締結判定とcompleted化も同一トランザクション内で確定する。
+    // トランザクション外に出すと、最終署名commit〜completed更新の間に
+    // contracts.cancelが挟まり「全員署名済みなのにcancelled」が成立してしまう
+    const allSigned = allSignedExcept(allSigners, signer.id)
+    let completedClaimed = false
+    if (allSigned) {
+      const completedClaim = await tx
+        .update(contracts)
+        .set({ status: 'completed', completedAt: now, updatedAt: now })
+        .where(and(
+          eq(contracts.id, signer.contractId),
+          inArray(contracts.status, ['sent', 'signing']),
+        ))
+        .returning({ id: contracts.id })
+      completedClaimed = completedClaim.length > 0
+      if (completedClaimed) {
+        await tx.insert(auditLogs).values({
+          id: ulid(),
+          contractId: signer.contractId,
+          action: 'completed',
+          actorEmail: 'system',
+          detail: '全署名者の署名が完了し、契約が締結されました',
+          createdAt: now,
+        })
+      }
+    }
+    return { outcome: 'signed' as const, allSigners, allSigned, completedClaimed }
   })
 
   if (txResult.outcome === 'not_signable') {
@@ -370,8 +397,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Already processed' }, { status: 400 })
   }
 
-  const allSigners = txResult.allSigners
-  const allSigned = allSignedExcept(allSigners, signer.id)
+  const { allSigners, allSigned, completedClaimed } = txResult
 
   // Notify sender
   if (sender) {
@@ -421,7 +447,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (allSigned) {
+  // 締結の確定（completed化+audit）はトランザクション内で済んでいる。
+  // ここでは時間のかかるPDF生成と完了メールだけをcommit後に行う
+  if (completedClaimed) {
     // 署名済みPDF（原本＋座標配置＋署名証明ページ）を生成して保存
     if (contract.pdfUrl) {
       try {
@@ -440,36 +468,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // atomic claim: 同順序の署名者が同時に完了した場合など、締結処理の
-    // 二重実行（audit重複・完了メール重複）を防ぎ、片方だけが後続を行う
-    const completedClaim = await db
-      .update(contracts)
-      .set({ status: 'completed', completedAt: now, updatedAt: now })
-      .where(and(
-        eq(contracts.id, signer.contractId),
-        inArray(contracts.status, ['sent', 'signing']),
-      ))
-      .returning({ id: contracts.id })
-
-    if (completedClaim.length > 0) {
-      await db.insert(auditLogs).values({
-        id: ulid(),
-        contractId: signer.contractId,
-        action: 'completed',
-        actorEmail: 'system',
-        detail: '全署名者の署名が完了し、契約が締結されました',
-        createdAt: now,
+    // Send completion emails to all signers
+    for (const s of allSigners) {
+      const emailData = contractCompletedEmail({
+        recipientName: s.name,
+        contractTitle: contract.title,
+        contractUrl: `${BASE_URL}/sign/${s.token}`,
       })
-
-      // Send completion emails to all signers
-      for (const s of allSigners) {
-        const emailData = contractCompletedEmail({
-          recipientName: s.name,
-          contractTitle: contract.title,
-          contractUrl: `${BASE_URL}/sign/${s.token}`,
-        })
-        await sendEmailSafe({ to: s.email, ...emailData }, 'api/sign:completedNotify')
-      }
+      await sendEmailSafe({ to: s.email, ...emailData }, 'api/sign:completedNotify')
     }
   }
 
