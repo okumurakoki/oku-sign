@@ -105,10 +105,14 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       console.error(`[cron/send-reminders] 送信失敗 contract=${contract.id}:`, err)
       // 送信できていないのにclaimだけ進むと次回が3日後になる。claimを戻して翌日再試行させる
+      // （自分のclaim値のままの場合だけ戻し、後続の更新を上書きしない）
       await db
         .update(contractSigners)
         .set({ lastReminderAt: current.lastReminderAt })
-        .where(eq(contractSigners.id, current.id))
+        .where(and(
+          eq(contractSigners.id, current.id),
+          eq(contractSigners.lastReminderAt, now),
+        ))
         .catch((rollbackErr) => {
           // 戻せなかった場合、このリマインドは最大3日遅延する（メール自体は再送される）
           console.error(`[cron/send-reminders] claim戻し失敗 signer=${current.id}:`, rollbackErr)

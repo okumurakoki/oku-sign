@@ -1,7 +1,7 @@
 import { headers } from 'next/headers'
 import { getDb } from '@/server/db'
 import { contractSigners, contracts, users, signatureFields, auditLogs } from '@/server/db/schema'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { getSignedUrl } from '@/server/storage'
 import { reportError } from '@/server/report-error'
@@ -113,6 +113,8 @@ export default async function SignPage({
         eq(contractSigners.id, signer.id),
         inArray(contractSigners.status, ['pending', 'notified']),
         isNull(contractSigners.viewedAt),
+        // 契約SELECT後の並行取消にもclaim時点で追随する（取消済みに閲覧証跡を作らない）
+        sql`EXISTS (SELECT 1 FROM ${contracts} WHERE ${contracts.id} = ${signer.contractId} AND ${contracts.status} IN ('sent', 'signing'))`,
       ))
       .returning({ id: contractSigners.id })
     if (viewedClaim.length > 0) {

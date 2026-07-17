@@ -1,7 +1,7 @@
 import { protectedProcedure, router } from '@/server/trpc'
 import { TRPCError } from '@trpc/server'
 import { subscriptions } from '@/server/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { z } from 'zod/v4'
 import { getStripe, ensurePartnerProductId, PARTNER_PLANS } from '@/server/stripe'
@@ -46,8 +46,16 @@ export const billingRouter = router({
     const selectedPlan = PARTNER_PLANS[input.plan]
     const stripe = getStripe()
 
-    // 既存サブスクの確認
-    const [existing] = await ctx.db
+    // ユーザー単位でトランザクションスコープのadvisory lockを取り、作成処理全体を
+    // 直列化する。idempotency keyだけでは「同プラン側がretrieve再利用・異プラン側が
+    // cancel+create」という別経路同士の並行を排他できず、二重課金余地が残るため。
+    // トランザクション内にStripe API呼び出しを含むのは意図的（数秒・同一ユーザーの
+    // 並行だけが待つ・接続はmax:3で影響は局所的）。
+    return await ctx.db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`billing:${ctx.user.id}`}))`)
+
+    // 既存サブスクの確認（ロック取得後に読む=直前の並行処理の結果が見える）
+    const [existing] = await tx
       .select()
       .from(subscriptions)
       .where(eq(subscriptions.userId, ctx.user.id))
@@ -83,7 +91,8 @@ export const billingRouter = router({
           expand: ['latest_invoice.confirmation_secret'],
         })
         if (ACTIVE_STATUSES.includes(prior.status)) {
-          // webhook遅延でDBが未同期のケース。二重作成せずDBを収束させて終了
+          // webhook遅延でDBが未同期のケース。二重作成せずDBを収束させて終了。
+          // 直後にthrowするためtxではなくctx.db（別接続）で書き、ロールバックさせない
           await ctx.db
             .update(subscriptions)
             .set({ status: prior.status as typeof subscriptions.$inferInsert.status, updatedAt: new Date() })
@@ -148,7 +157,7 @@ export const billingRouter = router({
     // DBに反映（upsert）
     const now = new Date()
     if (existing) {
-      await ctx.db
+      await tx
         .update(subscriptions)
         .set({
           stripeCustomerId: customerId,
@@ -159,7 +168,7 @@ export const billingRouter = router({
         })
         .where(eq(subscriptions.userId, ctx.user.id))
     } else {
-      await ctx.db.insert(subscriptions).values({
+      await tx.insert(subscriptions).values({
         id: ulid(),
         userId: ctx.user.id,
         stripeCustomerId: customerId,
@@ -179,6 +188,7 @@ export const billingRouter = router({
     }
 
     return { clientSecret, subscriptionId: subscription.id }
+    })
   }),
 
   // 解約（期末で停止）
