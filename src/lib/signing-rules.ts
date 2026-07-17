@@ -60,6 +60,62 @@ export function pctToPdfRect(field: PctRect, pageW: number, pageH: number): PdfR
   return { x, y, width, height }
 }
 
+// 署名画像として受け付けるのはPNGのdata URLのみ（署名パッドのtoDataURL出力）。
+// prefixだけでなくデコード後のPNGシグネチャも確認し、描画不能な偽データを弾く。
+export function isValidPngDataUrl(data: string | null | undefined): boolean {
+  const prefix = 'data:image/png;base64,'
+  if (!data || !data.startsWith(prefix)) return false
+  const b64 = data.slice(prefix.length)
+  if (b64.length === 0) return false
+  const buf = Buffer.from(b64, 'base64')
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  if (buf.length < sig.length) return false
+  return sig.every((b, i) => buf[i] === b)
+}
+
+// 署名欄への記入内容の検証（欄の所有・重複・タイプ整合・内容有無・必須網羅）。
+// タイプ不整合（例: 署名欄にvalueだけ送る）を許すと、PDFに何も描画されないまま
+// 締結が成立するため、fieldTypeと送信typeと内容の三点を厳密に対応付ける。
+export interface FieldValueInput {
+  fieldId: string
+  type: 'draw' | 'text' | 'date' | 'stamp'
+  value?: string | null
+  imageData?: string | null
+}
+export interface FieldDef { id: string; fieldType: string; required: boolean }
+export type FieldValidation = { ok: true } | { ok: false; code: string; error: string }
+
+const EXPECTED_TYPE: Record<string, FieldValueInput['type']> = {
+  signature: 'draw', stamp: 'stamp', text: 'text', date: 'date',
+}
+
+export function validateFieldValues(fields: FieldDef[], incoming: FieldValueInput[]): FieldValidation {
+  const fieldMap = new Map(fields.map((f) => [f.id, f]))
+  const seen = new Set<string>()
+  for (const v of incoming) {
+    const f = fieldMap.get(v.fieldId)
+    if (!f) return { ok: false, code: 'INVALID_FIELD', error: '不正な署名欄が含まれています' }
+    if (seen.has(v.fieldId)) return { ok: false, code: 'DUPLICATE_FIELD', error: '同じ署名欄への記入が重複しています' }
+    seen.add(v.fieldId)
+    if (v.type !== EXPECTED_TYPE[f.fieldType]) {
+      return { ok: false, code: 'TYPE_MISMATCH', error: '署名欄の種類と記入内容が一致しません' }
+    }
+    if (f.fieldType === 'signature' || f.fieldType === 'stamp') {
+      if (!isValidPngDataUrl(v.imageData)) {
+        return { ok: false, code: 'INVALID_IMAGE', error: '署名画像の形式が不正です' }
+      }
+    } else if (!v.value || v.value.trim().length === 0) {
+      return { ok: false, code: 'EMPTY_VALUE', error: '空の署名欄が含まれています' }
+    }
+  }
+  const filledIds = new Set(incoming.map((v) => v.fieldId))
+  const missingRequired = fields.filter((f) => f.required && !filledIds.has(f.id))
+  if (missingRequired.length > 0) {
+    return { ok: false, code: 'MISSING_REQUIRED', error: '必須の署名欄が未記入です' }
+  }
+  return { ok: true }
+}
+
 // アクセスコード失敗時のロック判定
 export function nextLockState(
   currentAttempts: number,

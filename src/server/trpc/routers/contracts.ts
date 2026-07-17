@@ -8,6 +8,8 @@ import { sendEmail } from '@/server/email'
 import { signingRequestEmail, reminderEmail } from '@/server/email/templates'
 import { getSignedUrl, downloadPdf, uploadPdfToPath } from '@/server/storage'
 import { hasActiveSubscription } from './billing'
+import { renderAndStoreSignedPdf } from '@/server/pdf/store-signed-pdf'
+import { reportError } from '@/server/report-error'
 import type { Context } from '@/server/trpc/context'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
@@ -141,6 +143,30 @@ export const contractsRouter = router({
       }
 
       return { ...contract, signers: signerList, auditLogs: logs, fields, pdfSignedUrl, signedPdfUrl }
+    }),
+
+  // 締結時にsigned.pdf生成が失敗した契約の再生成（オーナーのみ・completedのみ）
+  regenerateSignedPdf: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const contract = await assertContractOwner(ctx.db, input.id, ctx.user.id)
+      if (contract.status !== 'completed') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '締結済みの書類のみ再生成できます' })
+      }
+      try {
+        await renderAndStoreSignedPdf(ctx.db, input.id)
+      } catch (err) {
+        reportError(err, { scope: 'contracts.regenerateSignedPdf', contractId: input.id })
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: '署名済みPDFの再生成に失敗しました' })
+      }
+      await ctx.db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: input.id,
+        action: 'signed_pdf_regenerated',
+        actorEmail: ctx.user.email,
+        detail: '署名済みPDFを再生成しました',
+      })
+      return { ok: true }
     }),
 
   create: protectedProcedure
@@ -437,6 +463,18 @@ export const contractsRouter = router({
         throw new Error('書類が見つからないか、送信できない状態です')
       }
 
+      // 送信は課金商品の中心機能。作成時だけでなく送信時にもゲートする
+      // （有効期間中に量産したdraftを解約後に送る回避を塞ぐ）
+      const allowed = await hasActiveSubscription(ctx.db, ctx.user)
+      if (!allowed) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'パートナープランへの登録が必要です', cause: 'SUBSCRIPTION_REQUIRED' })
+      }
+
+      // 署名対象の文書が無い契約は送信させない（API直叩き対策）
+      if (!contract.pdfUrl) {
+        throw new Error('PDFがアップロードされていません')
+      }
+
       const signerList = await ctx.db
         .select()
         .from(contractSigners)
@@ -445,6 +483,22 @@ export const contractsRouter = router({
 
       if (signerList.length === 0) {
         throw new Error('署名者が設定されていません')
+      }
+
+      // atomic claim: 二重クリック/並行呼び出しで依頼メールが重複しないよう、
+      // 先にdraft→sentへ遷移させ、claimが取れた呼び出しだけがメールを送る
+      const now = new Date()
+      const claimed = await ctx.db
+        .update(contracts)
+        .set({ status: 'sent', sentAt: now, updatedAt: now })
+        .where(and(
+          eq(contracts.id, input.id),
+          eq(contracts.createdBy, ctx.user.id),
+          eq(contracts.status, 'draft'),
+        ))
+        .returning({ id: contracts.id })
+      if (claimed.length === 0) {
+        throw new Error('書類が見つからないか、送信できない状態です')
       }
 
       // 順次署名: 最初の順序の署名者のみに通知する（完了時に次の署名者へ自動通知）
@@ -459,18 +513,22 @@ export const contractsRouter = router({
         message: contract.message,
         expiresAt: contract.expiresAt,
       })
-      await sendEmail({ to: firstSigner.email, ...emailData })
+      try {
+        await sendEmail({ to: firstSigner.email, ...emailData })
+      } catch (err) {
+        // 依頼メールが届いていないのにsentのままだと誰も署名できず放置される。
+        // draftへ戻して送信者に失敗を見せ、再送信で回復できるようにする。
+        await ctx.db
+          .update(contracts)
+          .set({ status: 'draft', sentAt: null, updatedAt: new Date() })
+          .where(eq(contracts.id, input.id))
+        throw new Error(`署名依頼メールの送信に失敗しました。時間をおいて再度お試しください`, { cause: err })
+      }
 
-      const now = new Date()
       await ctx.db
         .update(contractSigners)
         .set({ status: 'notified' })
         .where(eq(contractSigners.id, firstSigner.id))
-
-      await ctx.db
-        .update(contracts)
-        .set({ status: 'sent', sentAt: now, updatedAt: now })
-        .where(eq(contracts.id, input.id))
 
       await ctx.db.insert(auditLogs).values({
         id: ulid(),
@@ -491,10 +549,19 @@ export const contractsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: '送信中の書類のみ取り消せます' })
       }
       const now = new Date()
-      await ctx.db
+      // atomic claim: 並行実行や署名者側の辞退cancelとの競合でaudit重複を防ぐ
+      const claimed = await ctx.db
         .update(contracts)
         .set({ status: 'cancelled', updatedAt: now })
-        .where(and(eq(contracts.id, input.id), eq(contracts.createdBy, ctx.user.id)))
+        .where(and(
+          eq(contracts.id, input.id),
+          eq(contracts.createdBy, ctx.user.id),
+          inArray(contracts.status, ['sent', 'signing']),
+        ))
+        .returning({ id: contracts.id })
+      if (claimed.length === 0) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '送信中の書類のみ取り消せます' })
+      }
 
       await ctx.db.insert(auditLogs).values({
         id: ulid(),

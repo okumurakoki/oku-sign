@@ -43,6 +43,13 @@
       "when": 1784006109649,
       "tag": "0005_condemned_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784277874751,
+      "tag": "0006_great_the_fury",
+      "breakpoints": true
     }
   ]
 }

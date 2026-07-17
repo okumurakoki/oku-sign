@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod/v4'
 import { getDb } from '@/server/db'
 import { contractSigners, signatures, signatureFields, auditLogs, contracts, users } from '@/server/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signerCompletedEmail, signerDeclinedEmail, contractCompletedEmail, signingRequestEmail } from '@/server/email/templates'
-import { downloadPdf, uploadSignedPdf } from '@/server/storage'
-import { generateSignedPdf } from '@/server/pdf/generate-signed-pdf'
-import { accessCodeMatches, isContractSignable, isExpired, isBlockedByOrder, allSignedExcept, nextLockState } from '@/lib/signing-rules'
+import { getSignedUrl } from '@/server/storage'
+import { renderAndStoreSignedPdf } from '@/server/pdf/store-signed-pdf'
+import { accessCodeMatches, isContractSignable, isExpired, isBlockedByOrder, allSignedExcept, nextLockState, validateFieldValues, isValidPngDataUrl } from '@/lib/signing-rules'
 import { reportError } from '@/server/report-error'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
@@ -16,6 +16,18 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:7583'
 // アクセスコード総当たり対策: N回失敗でロック
 const MAX_ACCESS_ATTEMPTS = 5
 const LOCK_DURATION_MS = 15 * 60 * 1000 // 15分
+
+// メール送信の失敗が署名/締結のDB状態遷移を巻き添えにしないよう隔離する。
+// 失敗はSentryに記録し、リマインダーcron(notified/viewed対象)が再送で救う。
+async function sendEmailSafe(params: Parameters<typeof sendEmail>[0], scope: string): Promise<boolean> {
+  try {
+    await sendEmail(params)
+    return true
+  } catch (err) {
+    reportError(err, { scope, to: params.to })
+    return false
+  }
+}
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
@@ -108,6 +120,62 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // --- UNLOCK ---
+  // アクセスコード検証済み（上のブロックを通過）の署名者にPDF/署名欄を返す。
+  // アクセスコード付き契約は、ページ初期表示ではPDF URLも署名欄も配布しない。
+  if (action === 'unlock') {
+    const ipAddr = request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? 'unknown'
+    const uaStr = request.headers.get('user-agent') ?? 'unknown'
+    // コード検証を伴う初回閲覧をここで記録する
+    if ((signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
+      const viewedClaim = await db
+        .update(contractSigners)
+        .set({ status: 'viewed', viewedAt: new Date() })
+        .where(and(
+          eq(contractSigners.id, signer.id),
+          inArray(contractSigners.status, ['pending', 'notified']),
+          isNull(contractSigners.viewedAt),
+        ))
+        .returning({ id: contractSigners.id })
+      if (viewedClaim.length > 0) {
+        await db.insert(auditLogs).values({
+          id: ulid(),
+          contractId: signer.contractId,
+          action: 'viewed',
+          actorEmail: signer.email,
+          detail: `${signer.name}が書類を閲覧しました（アクセスコード検証済み）`,
+          ipAddress: ipAddr,
+          userAgent: uaStr,
+        })
+      }
+    }
+    let pdfSignedUrl: string | null = null
+    if (contract.pdfUrl) {
+      try {
+        pdfSignedUrl = await getSignedUrl(contract.pdfUrl)
+      } catch (err) {
+        reportError(err, { scope: 'api/sign:unlockPdfUrl', contractId: contract.id })
+      }
+    }
+    const myFields = await db
+      .select()
+      .from(signatureFields)
+      .where(and(
+        eq(signatureFields.contractId, signer.contractId),
+        eq(signatureFields.signerId, signer.id),
+      ))
+      .orderBy(signatureFields.page)
+    return NextResponse.json({
+      ok: true,
+      action: 'unlocked',
+      pdfUrl: pdfSignedUrl,
+      fields: myFields.map((f) => ({
+        id: f.id, fieldType: f.fieldType, label: f.label, page: f.page,
+        x: f.x, y: f.y, width: f.width, height: f.height, required: f.required,
+      })),
+    })
+  }
+
   // 署名順序の強制（自分より前の順序の署名者が全員署名済みであること）
   if (action !== 'decline') {
     const priorSigners = await db
@@ -133,26 +201,50 @@ export async function POST(request: NextRequest) {
   // --- DECLINE ---
   if (action === 'decline') {
     const reason = typeof declineReason === 'string' ? declineReason.slice(0, 1000) : null
-    await db
-      .update(contractSigners)
-      .set({ status: 'declined', declineReason: reason })
-      .where(eq(contractSigners.id, signer.id))
+    // 単一トランザクション: 契約行ロック下で状態を再検証し、claim・取消・auditを
+    // 全て確定 or 全てロールバックする（部分失敗で不整合な declined を残さない）
+    const outcome = await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(contracts)
+        .where(eq(contracts.id, signer.contractId))
+        .for('update')
+      if (!locked || !isContractSignable(locked.status)) return 'not_signable' as const
 
-    // 1名でも辞退したら契約を取消にして全体を終了（後続署名者のブロック/リマインド暴走を防ぐ）
-    await db
-      .update(contracts)
-      .set({ status: 'cancelled', updatedAt: now })
-      .where(eq(contracts.id, signer.contractId))
+      // atomic claim: 二重POST/署名との競合時はどちらか一方だけが処理する
+      const claimed = await tx
+        .update(contractSigners)
+        .set({ status: 'declined', declineReason: reason })
+        .where(and(
+          eq(contractSigners.id, signer.id),
+          inArray(contractSigners.status, ['pending', 'notified', 'viewed']),
+        ))
+        .returning({ id: contractSigners.id })
+      if (claimed.length === 0) return 'already' as const
 
-    await db.insert(auditLogs).values({
-      id: ulid(),
-      contractId: signer.contractId,
-      action: 'declined',
-      actorEmail: signer.email,
-      detail: `${signer.name}が署名を辞退しました${reason ? `（理由: ${reason}）` : ''}`,
-      ipAddress: ip,
-      createdAt: now,
+      // 1名でも辞退したら契約を取消にして全体を終了（後続署名者のブロック/リマインド暴走を防ぐ）
+      await tx
+        .update(contracts)
+        .set({ status: 'cancelled', updatedAt: now })
+        .where(eq(contracts.id, signer.contractId))
+
+      await tx.insert(auditLogs).values({
+        id: ulid(),
+        contractId: signer.contractId,
+        action: 'declined',
+        actorEmail: signer.email,
+        detail: `${signer.name}が署名を辞退しました${reason ? `（理由: ${reason}）` : ''}`,
+        ipAddress: ip,
+        createdAt: now,
+      })
+      return 'declined' as const
     })
+    if (outcome === 'not_signable') {
+      return NextResponse.json({ error: 'この書類は現在署名を受け付けていません' }, { status: 409 })
+    }
+    if (outcome === 'already') {
+      return NextResponse.json({ error: 'Already processed' }, { status: 400 })
+    }
 
     // Notify sender
     if (sender) {
@@ -163,7 +255,7 @@ export async function POST(request: NextRequest) {
         contractUrl: `${BASE_URL}/contracts/${contract.id}`,
         reason: declineReason,
       })
-      await sendEmail({ to: sender.email, ...emailData })
+      await sendEmailSafe({ to: sender.email, ...emailData }, 'api/sign:declineNotify')
     }
 
     return NextResponse.json({ ok: true, action: 'declined' })
@@ -198,62 +290,87 @@ export async function POST(request: NextRequest) {
     ))
 
   if (myFields.length > 0) {
-    const fieldMap = new Map(myFields.map((f) => [f.id, f]))
-    // 送信された各値が自分の欄に属するか
-    for (const v of incoming) {
-      if (!fieldMap.has(v.fieldId)) {
-        return NextResponse.json({ error: '不正な署名欄が含まれています', code: 'INVALID_FIELD' }, { status: 400 })
-      }
-      const hasContent = (v.imageData && v.imageData.length > 0) || (v.value && v.value.length > 0)
-      if (!hasContent) {
-        return NextResponse.json({ error: '空の署名欄が含まれています' }, { status: 400 })
-      }
+    // 欄の所有・重複・タイプ整合（署名欄にvalueだけ送る等の空振り署名を拒否）・
+    // 画像のPNG実体検証・必須網羅をまとめて検証
+    const check = validateFieldValues(myFields, incoming)
+    if (!check.ok) {
+      return NextResponse.json({ error: check.error, code: check.code }, { status: 400 })
     }
-    // 必須欄がすべて記入されているか（サーバー側で強制）
-    const filledIds = new Set(incoming.map((v) => v.fieldId))
-    const missingRequired = myFields.filter((f) => f.required && !filledIds.has(f.id))
-    if (missingRequired.length > 0) {
-      return NextResponse.json({ error: '必須の署名欄が未記入です', code: 'MISSING_REQUIRED' }, { status: 400 })
+  } else {
+    // フォールバック単一署名も画像の実体を検証
+    if (!isValidPngDataUrl(incoming[0]?.imageData)) {
+      return NextResponse.json({ error: '署名画像の形式が不正です', code: 'INVALID_IMAGE' }, { status: 400 })
     }
   }
 
-  // 署名レコードを欄ごとに保存
-  await db.insert(signatures).values(
-    incoming.map((v) => ({
+  // 単一トランザクション: 契約行ロック下で状態・期限を再検証（送信者取消/expiry cron
+  // との競合を排他）し、claim・署名行・auditを全て確定 or 全てロールバックする。
+  // 契約行ロックにより同一契約の署名は直列化され、「相手の署名行が見えないまま
+  // 全員署名済み判定になる」並行穴も塞がる。
+  const txResult = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(contracts)
+      .where(eq(contracts.id, signer.contractId))
+      .for('update')
+    if (!locked || !isContractSignable(locked.status)) return { outcome: 'not_signable' as const }
+    if (isExpired(locked.expiresAt)) return { outcome: 'expired' as const }
+
+    // atomic claim: 二重POST時は片方だけが通過する
+    const claimed = await tx
+      .update(contractSigners)
+      .set({ status: 'signed', signedAt: now })
+      .where(and(
+        eq(contractSigners.id, signer.id),
+        inArray(contractSigners.status, ['pending', 'notified', 'viewed']),
+      ))
+      .returning({ id: contractSigners.id })
+    if (claimed.length === 0) return { outcome: 'already' as const }
+
+    // 署名レコードを欄ごとに保存
+    await tx.insert(signatures).values(
+      incoming.map((v) => ({
+        id: ulid(),
+        contractId: signer.contractId,
+        signerId: signer.id,
+        fieldId: v.fieldId || null,
+        type: v.type,
+        imageUrl: v.imageData ?? null,
+        value: v.value ?? null,
+        ipAddress: ip,
+        userAgent: ua,
+        signedAt: now,
+      })),
+    )
+
+    await tx.insert(auditLogs).values({
       id: ulid(),
       contractId: signer.contractId,
-      signerId: signer.id,
-      fieldId: v.fieldId || null,
-      type: v.type,
-      imageUrl: v.imageData ?? null,
-      value: v.value ?? null,
+      action: 'signed',
+      actorEmail: signer.email,
+      detail: `${signer.name}が署名しました`,
       ipAddress: ip,
-      userAgent: ua,
-      signedAt: now,
-    })),
-  )
+      createdAt: now,
+    })
 
-  await db
-    .update(contractSigners)
-    .set({ status: 'signed', signedAt: now })
-    .where(eq(contractSigners.id, signer.id))
-
-  await db.insert(auditLogs).values({
-    id: ulid(),
-    contractId: signer.contractId,
-    action: 'signed',
-    actorEmail: signer.email,
-    detail: `${signer.name}が署名しました`,
-    ipAddress: ip,
-    createdAt: now,
+    const allSigners = await tx
+      .select()
+      .from(contractSigners)
+      .where(eq(contractSigners.contractId, signer.contractId))
+    return { outcome: 'signed' as const, allSigners }
   })
 
-  // Check all signed
-  const allSigners = await db
-    .select()
-    .from(contractSigners)
-    .where(eq(contractSigners.contractId, signer.contractId))
+  if (txResult.outcome === 'not_signable') {
+    return NextResponse.json({ error: 'この書類は現在署名を受け付けていません' }, { status: 409 })
+  }
+  if (txResult.outcome === 'expired') {
+    return NextResponse.json({ error: '署名期限を過ぎています' }, { status: 410 })
+  }
+  if (txResult.outcome === 'already') {
+    return NextResponse.json({ error: 'Already processed' }, { status: 400 })
+  }
 
+  const allSigners = txResult.allSigners
   const allSigned = allSignedExcept(allSigners, signer.id)
 
   // Notify sender
@@ -265,7 +382,7 @@ export async function POST(request: NextRequest) {
       contractUrl: `${BASE_URL}/contracts/${contract.id}`,
       allCompleted: allSigned,
     })
-    await sendEmail({ to: sender.email, ...emailData })
+    await sendEmailSafe({ to: sender.email, ...emailData }, 'api/sign:senderNotify')
   }
 
   // 順次署名: 未完了なら次順序の署名者へ自動通知
@@ -284,17 +401,21 @@ export async function POST(request: NextRequest) {
         message: contract.message,
         expiresAt: contract.expiresAt,
       })
-      await sendEmail({ to: nextSigner.email, ...emailData })
+      // 先にnotifiedへ遷移させる: メール失敗時もリマインダーcron(notified対象)が
+      // 3日後に再送して救えるようにする（pendingのままだとcron対象外で永久放置）
       await db
         .update(contractSigners)
         .set({ status: 'notified' })
         .where(eq(contractSigners.id, nextSigner.id))
+      const sent = await sendEmailSafe({ to: nextSigner.email, ...emailData }, 'api/sign:nextSignerNotify')
       await db.insert(auditLogs).values({
         id: ulid(),
         contractId: signer.contractId,
         action: 'notified',
         actorEmail: 'system',
-        detail: `${nextSigner.name}に署名依頼を送信しました（順次）`,
+        detail: sent
+          ? `${nextSigner.name}に署名依頼を送信しました（順次）`
+          : `${nextSigner.name}への署名依頼メール送信に失敗しました（リマインダーで再送されます）`,
         createdAt: new Date(),
       })
     }
@@ -304,59 +425,9 @@ export async function POST(request: NextRequest) {
     // 署名済みPDF（原本＋座標配置＋署名証明ページ）を生成して保存
     if (contract.pdfUrl) {
       try {
-        const originalPdf = await downloadPdf(contract.pdfUrl)
-        const sigRows = await db
-          .select()
-          .from(signatures)
-          .where(eq(signatures.contractId, signer.contractId))
-        const fieldRows = await db
-          .select()
-          .from(signatureFields)
-          .where(eq(signatureFields.contractId, signer.contractId))
-        const fieldMap = new Map(fieldRows.map((f) => [f.id, f]))
-
-        // 座標配置する署名（fieldId付きのもの）
-        const placedFields = sigRows
-          .filter((r) => r.fieldId && fieldMap.has(r.fieldId))
-          .map((r) => {
-            const f = fieldMap.get(r.fieldId!)!
-            return {
-              page: f.page,
-              x: f.x, y: f.y, width: f.width, height: f.height,
-              type: r.type,
-              imageData: r.imageUrl,
-              value: r.value,
-            }
-          })
-
-        // 証明ページ用：署名者ごとの代表署名画像（drawを優先）
-        const drawBySigner = new Map<string, typeof sigRows[number]>()
-        for (const r of sigRows) {
-          if (!drawBySigner.has(r.signerId) || (r.imageUrl && r.type === 'draw')) {
-            drawBySigner.set(r.signerId, r)
-          }
-        }
-
-        const orderedSigners = [...allSigners].sort((a, b) => a.signOrder - b.signOrder)
-        const signedPdf = await generateSignedPdf({
-          originalPdf,
-          contractTitle: contract.title,
-          contractId: contract.id,
-          placedFields,
-          signers: orderedSigners.map((s) => {
-            const sig = drawBySigner.get(s.id)
-            return {
-              name: s.name,
-              email: s.email,
-              signedAt: s.signedAt ?? sig?.signedAt ?? null,
-              ipAddress: sig?.ipAddress ?? null,
-              signatureImage: sig?.imageUrl ?? null,
-            }
-          }),
-        })
-        await uploadSignedPdf(signedPdf, contract.id)
+        await renderAndStoreSignedPdf(db, signer.contractId)
       } catch (err) {
-        // PDF生成失敗でも締結は成立させる（監査ログに記録し後続で再生成可能に）
+        // PDF生成失敗でも締結は成立させる（監査ログに記録し、オーナーが契約詳細から再生成できる）
         reportError(err, { scope: 'api/sign:signedPdf', contractId: contract.id })
         await db.insert(auditLogs).values({
           id: ulid(),
@@ -369,28 +440,36 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await db
+    // atomic claim: 同順序の署名者が同時に完了した場合など、締結処理の
+    // 二重実行（audit重複・完了メール重複）を防ぎ、片方だけが後続を行う
+    const completedClaim = await db
       .update(contracts)
       .set({ status: 'completed', completedAt: now, updatedAt: now })
-      .where(eq(contracts.id, signer.contractId))
+      .where(and(
+        eq(contracts.id, signer.contractId),
+        inArray(contracts.status, ['sent', 'signing']),
+      ))
+      .returning({ id: contracts.id })
 
-    await db.insert(auditLogs).values({
-      id: ulid(),
-      contractId: signer.contractId,
-      action: 'completed',
-      actorEmail: 'system',
-      detail: '全署名者の署名が完了し、契約が締結されました',
-      createdAt: now,
-    })
-
-    // Send completion emails to all signers
-    for (const s of allSigners) {
-      const emailData = contractCompletedEmail({
-        recipientName: s.name,
-        contractTitle: contract.title,
-        contractUrl: `${BASE_URL}/sign/${s.token}`,
+    if (completedClaim.length > 0) {
+      await db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: signer.contractId,
+        action: 'completed',
+        actorEmail: 'system',
+        detail: '全署名者の署名が完了し、契約が締結されました',
+        createdAt: now,
       })
-      await sendEmail({ to: s.email, ...emailData })
+
+      // Send completion emails to all signers
+      for (const s of allSigners) {
+        const emailData = contractCompletedEmail({
+          recipientName: s.name,
+          contractTitle: contract.title,
+          contractUrl: `${BASE_URL}/sign/${s.token}`,
+        })
+        await sendEmailSafe({ to: s.email, ...emailData }, 'api/sign:completedNotify')
+      }
     }
   }
 

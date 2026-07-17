@@ -5,6 +5,8 @@ import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { z } from 'zod/v4'
 import { getStripe, ensurePartnerProductId, PARTNER_PLANS } from '@/server/stripe'
+import type Stripe from 'stripe'
+import { reportError } from '@/server/report-error'
 import type { Context } from '@/server/trpc/context'
 
 const ACTIVE_STATUSES = ['active', 'trialing']
@@ -71,25 +73,64 @@ export const billingRouter = router({
 
     const productId = await ensurePartnerProductId()
 
-    // 既存の未完了サブスクがあれば再利用、なければ作成
-    const subscription = await stripe.subscriptions.create(
-      {
-        customer: customerId,
-        items: [{
-          price_data: {
-            currency: selectedPlan.currency,
-            product: productId,
-            unit_amount: selectedPlan.amount,
-            recurring: { interval: selectedPlan.interval },
-          },
-        }],
-        payment_behavior: 'default_incomplete',
-        payment_settings: { save_default_payment_method: 'on_subscription' },
-        expand: ['latest_invoice.confirmation_secret'],
-        metadata: { userId: ctx.user.id },
-      },
-      { idempotencyKey: `subscription-create-${ctx.user.id}-${existing?.id ?? 'new'}` },
-    )
+    // 既存の未完了サブスクをStripeから取得して再利用する。再試行のたびに
+    // 新しいSubscriptionを作ると、古いincomplete subが宙に浮き、複数タブで
+    // それぞれ確定されると二重課金になる（DBは最後の1本しか追跡しない）。
+    let subscription: Stripe.Subscription | null = null
+    if (existing?.stripeSubscriptionId) {
+      try {
+        const prior = await stripe.subscriptions.retrieve(existing.stripeSubscriptionId, {
+          expand: ['latest_invoice.confirmation_secret'],
+        })
+        if (ACTIVE_STATUSES.includes(prior.status)) {
+          // webhook遅延でDBが未同期のケース。二重作成せずDBを収束させて終了
+          await ctx.db
+            .update(subscriptions)
+            .set({ status: prior.status as typeof subscriptions.$inferInsert.status, updatedAt: new Date() })
+            .where(eq(subscriptions.userId, ctx.user.id))
+          throw new TRPCError({ code: 'BAD_REQUEST', message: '既に有効なサブスクリプションがあります' })
+        }
+        if (prior.status === 'past_due' || prior.status === 'unpaid') {
+          // 未払い中に新規subを重ねると二重課金になる。既存の支払いを直してもらう
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'お支払いに問題があります。カード情報を更新してください' })
+        }
+        if (prior.status === 'incomplete') {
+          const priorInterval = prior.items.data[0]?.price.recurring?.interval
+          if (priorInterval === selectedPlan.interval) {
+            subscription = prior // 同プランの未完了があればそのまま再利用
+          } else {
+            // プラン変更の再試行: 古い未完了subを回収してから新規作成
+            await stripe.subscriptions.cancel(prior.id)
+          }
+        }
+        // incomplete_expired / canceled は回収済み扱いでそのまま新規作成へ
+      } catch (err) {
+        if (err instanceof TRPCError) throw err
+        // retrieve失敗（削除済み等）は新規作成にフォールバック
+        reportError(err, { scope: 'billing:retrievePriorSubscription', userId: ctx.user.id })
+      }
+    }
+
+    if (!subscription) {
+      subscription = await stripe.subscriptions.create(
+        {
+          customer: customerId,
+          items: [{
+            price_data: {
+              currency: selectedPlan.currency,
+              product: productId,
+              unit_amount: selectedPlan.amount,
+              recurring: { interval: selectedPlan.interval },
+            },
+          }],
+          payment_behavior: 'default_incomplete',
+          payment_settings: { save_default_payment_method: 'on_subscription' },
+          expand: ['latest_invoice.confirmation_secret'],
+          metadata: { userId: ctx.user.id },
+        },
+        { idempotencyKey: `subscription-create-${ctx.user.id}-${input.plan}-${existing?.stripeSubscriptionId ?? 'new'}` },
+      )
+    }
 
     // DBに反映（upsert）
     const now = new Date()

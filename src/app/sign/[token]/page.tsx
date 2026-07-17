@@ -1,7 +1,10 @@
+import { headers } from 'next/headers'
 import { getDb } from '@/server/db'
-import { contractSigners, contracts, users, signatureFields } from '@/server/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { contractSigners, contracts, users, signatureFields, auditLogs } from '@/server/db/schema'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { ulid } from 'ulid'
 import { getSignedUrl } from '@/server/storage'
+import { reportError } from '@/server/report-error'
 import { SigningView } from './signing-view'
 
 export default async function SignPage({
@@ -50,12 +53,30 @@ export default async function SignPage({
     )
   }
 
-  // Record view if first time（pending/notified の初回アクセスで viewed に）
-  if ((signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
-    await db
+  // Record view if first time（pending/notified の初回アクセスで viewed に）。
+  // アクセスコード付きはコード検証後（/api/sign unlock）に記録するためここでは記録しない
+  if (!signer.accessCode && (signer.status === 'pending' || signer.status === 'notified') && !signer.viewedAt) {
+    const viewedClaim = await db
       .update(contractSigners)
       .set({ status: 'viewed', viewedAt: new Date() })
-      .where(eq(contractSigners.id, signer.id))
+      .where(and(
+        eq(contractSigners.id, signer.id),
+        inArray(contractSigners.status, ['pending', 'notified']),
+        isNull(contractSigners.viewedAt),
+      ))
+      .returning({ id: contractSigners.id })
+    if (viewedClaim.length > 0) {
+      const h = await headers()
+      await db.insert(auditLogs).values({
+        id: ulid(),
+        contractId: signer.contractId,
+        action: 'viewed',
+        actorEmail: signer.email,
+        detail: `${signer.name}が書類を閲覧しました`,
+        ipAddress: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? 'unknown',
+        userAgent: h.get('user-agent') ?? 'unknown',
+      })
+    }
   }
 
   // Contract cancelled
@@ -113,18 +134,23 @@ export default async function SignPage({
     .where(eq(users.id, contract.createdBy))
     .limit(1)
 
-  // 契約PDFの署名付きURL（privateバケット・有効期限付き）を生成
+  // 契約PDFの署名付きURL（privateバケット・有効期限付き）を生成。
+  // アクセスコード付きの署名者には初期表示で配布しない（リンク転送・漏洩時に
+  // コードを知らない第三者が内容を閲覧できてしまう）。コード検証後に
+  // /api/sign の unlock アクションが返す。
+  const requiresAccessCode = !!signer.accessCode
   let pdfSignedUrl: string | null = null
-  if (contract.pdfUrl) {
+  if (contract.pdfUrl && !requiresAccessCode) {
     try {
       pdfSignedUrl = await getSignedUrl(contract.pdfUrl)
     } catch (err) {
-      console.error('[sign] PDF署名URL生成失敗:', err)
+      // 失敗時はSigningViewが「PDFが添付されていません」を表示する（ページ全体は落とさない）
+      reportError(err, { scope: 'sign/page:pdfSignedUrl', contractId: contract.id })
     }
   }
 
   // この署名者に割り当てられた署名欄のみ取得（他署名者の欄は返さない）
-  const myFields = await db
+  const myFields = requiresAccessCode ? [] : await db
     .select()
     .from(signatureFields)
     .where(and(

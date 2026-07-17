@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/server/db'
 import { contracts, contractSigners, auditLogs, users } from '@/server/db/schema'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, or, isNull, lt } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { reminderEmail } from '@/server/email/templates'
@@ -67,6 +67,18 @@ export async function GET(request: NextRequest) {
       .where(eq(users.id, contract.createdBy))
       .limit(1)
 
+    // 送信前に lastReminderAt を条件付きUPDATEでclaimする。並行cronの両方が
+    // 同じ判定を通ってもUPDATEの再評価でどちらか一方だけが送信権を得る
+    const claimed = await db
+      .update(contractSigners)
+      .set({ lastReminderAt: now })
+      .where(and(
+        eq(contractSigners.id, current.id),
+        or(isNull(contractSigners.lastReminderAt), lt(contractSigners.lastReminderAt, threshold)),
+      ))
+      .returning({ id: contractSigners.id })
+    if (claimed.length === 0) continue
+
     try {
       const emailData = reminderEmail({
         signerName: current.name,
@@ -77,11 +89,6 @@ export async function GET(request: NextRequest) {
         expiresAt: contract.expiresAt,
       })
       await sendEmail({ to: current.email, ...emailData })
-
-      await db
-        .update(contractSigners)
-        .set({ lastReminderAt: now })
-        .where(eq(contractSigners.id, current.id))
 
       await db.insert(auditLogs).values({
         id: ulid(),
@@ -94,6 +101,15 @@ export async function GET(request: NextRequest) {
       remindersSent++
     } catch (err) {
       console.error(`[cron/send-reminders] 送信失敗 contract=${contract.id}:`, err)
+      // 送信できていないのにclaimだけ進むと次回が3日後になる。claimを戻して翌日再試行させる
+      await db
+        .update(contractSigners)
+        .set({ lastReminderAt: current.lastReminderAt })
+        .where(eq(contractSigners.id, current.id))
+        .catch((rollbackErr) => {
+          // 戻せなかった場合、このリマインドは最大3日遅延する（メール自体は再送される）
+          console.error(`[cron/send-reminders] claim戻し失敗 signer=${current.id}:`, rollbackErr)
+        })
     }
   }
 

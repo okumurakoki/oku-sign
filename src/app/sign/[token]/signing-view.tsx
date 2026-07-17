@@ -49,7 +49,18 @@ const FIELD_ICON: Record<FieldType, typeof PenLine> = {
 // - 署名は一度描けば以降の署名欄はワンタップで使い回し
 // - 下部固定バーからいつでも完了操作
 export function SigningView(props: Props) {
-  const { token, signerName, contractTitle, pdfUrl, senderName, senderCompany, message, expiresAt, requiresAccessCode, fields } = props
+  const { token, signerName, contractTitle, senderName, senderCompany, message, expiresAt, requiresAccessCode } = props
+
+  // アクセスコード付きの契約は、サーバーがPDF/署名欄を初期配布しない。
+  // コード検証(unlock)成功後にここへ注入されるまで書類はロック表示になる。
+  const [unlockedData, setUnlockedData] = useState<{ pdfUrl: string | null; fields: SignField[] } | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
+  const locked = requiresAccessCode && unlockedData === null
+  const pdfUrl = unlockedData ? unlockedData.pdfUrl : props.pdfUrl
+  const fields = useMemo(
+    () => (unlockedData ? unlockedData.fields : props.fields),
+    [unlockedData, props.fields],
+  )
 
   const [mode, setMode] = useState<'view' | 'sign' | 'decline'>('view')
   const [submitting, setSubmitting] = useState(false)
@@ -161,6 +172,33 @@ export function SigningView(props: Props) {
     document.getElementById('sign-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
+  // アクセスコードを検証して書類(PDF/署名欄)を取得する
+  const handleUnlock = async () => {
+    if (!accessCode.trim()) {
+      setError('アクセスコードを入力してください')
+      return
+    }
+    setError(null)
+    setUnlocking(true)
+    try {
+      const res = await fetch('/api/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, action: 'unlock', accessCode }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? 'アクセスコードの確認に失敗しました')
+        return
+      }
+      setUnlockedData({ pdfUrl: data.pdfUrl ?? null, fields: data.fields ?? [] })
+    } catch {
+      setError('通信に失敗しました。時間をおいて再度お試しください')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
   const submitSign = async () => {
     if (requiresAccessCode && !accessCode.trim()) {
       setError('アクセスコードを入力してください')
@@ -253,6 +291,55 @@ export function SigningView(props: Props) {
   }
 
   const filledRequired = requiredTotal - requiredUnfilled.length
+
+  // アクセスコード未検証: 書類内容(PDF/署名欄)は配布されていない。コード入力ゲートを表示
+  if (locked) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-30 border-b bg-white">
+          <div className="mx-auto flex h-14 max-w-4xl items-center gap-3 px-4 sm:px-6">
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-[11px] font-bold text-primary-foreground">oku</div>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[10.5px] text-[var(--faint)]">署名の依頼が届いています</p>
+              <p className="truncate text-[13px] font-semibold">{sender ?? 'okuサイン'}</p>
+            </div>
+            <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] font-medium text-[var(--ok)]">
+              <Lock size={13} />
+              <span className="hidden sm:inline">暗号化された接続</span>
+            </span>
+          </div>
+        </header>
+        <div className="mx-auto max-w-md space-y-4 px-4 py-10 sm:px-6">
+          <div className="rounded-lg border bg-card p-6">
+            <div className="mb-4 grid h-12 w-12 place-items-center rounded-full bg-accent">
+              <Lock size={20} className="text-primary" />
+            </div>
+            <h1 className="mb-1 text-[15px] font-bold">{signerName} 様</h1>
+            <p className="mb-4 text-[13px] leading-relaxed text-muted-foreground">
+              この書類はアクセスコードで保護されています。送信者から伝えられたコードを入力すると内容が表示されます。
+            </p>
+            <label className="mb-1.5 block text-xs font-medium">アクセスコード</label>
+            <input
+              type="text"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleUnlock() }}
+              autoFocus
+              className="flex h-10 w-full rounded-md border bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="送信者から伝えられたコードを入力"
+            />
+            {error && <p className="mt-2 text-[12.5px] text-[var(--alert)]">{error}</p>}
+            <Button className="mt-4 h-10 w-full" onClick={handleUnlock} disabled={unlocking}>
+              {unlocking ? '確認中…' : '書類を表示'}
+            </Button>
+          </div>
+          <p className="text-center text-[11px] text-[var(--faint)]">
+            コードがご不明な場合は送信者にお問い合わせください
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background pb-24">
