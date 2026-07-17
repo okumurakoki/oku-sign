@@ -62,6 +62,11 @@ export function collectDrawnText(input: SignedPdfInput): string {
   return parts.join('')
 }
 
+// loclが日本語文脈の数字を代替グリフに置換すると、pdf-libのW(幅)配列に
+// その幅が載らずビューアがデフォルト幅1000で描き数字の字間が倍化する（実測）。
+// 代替グリフを使わないようloclを無効化する。
+const LAYOUT_FEATURES = { locl: false }
+
 // 文書に必要な文字だけをharfbuzzでサブセットして埋め込む（9.5MB→数十KB）。
 // pdf-lib側のsubset:trueはグリフ破損の実測があるため使わず、事前サブセット
 // したフォントを全埋め込み(subset:false)する。失敗時は従来どおり全埋め込み。
@@ -72,10 +77,10 @@ async function embedJpFont(pdfDoc: PDFDocument, input: SignedPdfInput): Promise<
       targetFormat: 'truetype',
       variationAxes: { wght: 400 },
     })
-    return await pdfDoc.embedFont(sub, { subset: false })
+    return await pdfDoc.embedFont(sub, { subset: false, features: LAYOUT_FEATURES })
   } catch (err) {
     console.error('[generate-signed-pdf] フォントサブセット失敗・全埋め込みへフォールバック:', err)
-    return await pdfDoc.embedFont(fullBytes, { subset: false })
+    return await pdfDoc.embedFont(fullBytes, { subset: false, features: LAYOUT_FEATURES })
   }
 }
 
