@@ -46,47 +46,52 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ received: true })
 }
 
+// StripeのstatusをDBのenumへ写す（DBに無い値は安全側=利用不可方向へ倒す）
+function mapStripeStatus(status: Stripe.Subscription.Status): typeof subscriptions.$inferInsert.status {
+  switch (status) {
+    case 'incomplete_expired':
+      return 'canceled'
+    case 'paused':
+      return 'past_due'
+    default:
+      return status
+  }
+}
+
+// Stripeイベントは順序保証がない。解約後に古いinvoice.paidや
+// customer.subscription.updatedが遅延到着すると、イベントペイロードの状態で
+// DBだけがactiveへ巻き戻る。イベント種別から状態を推測せず、常にStripeの
+// 最新Subscriptionをretrieveして収束させる（解約済みsubはstatus='canceled'が返る）。
+async function syncSubscriptionFromStripe(db: ReturnType<typeof getDb>, subId: string) {
+  const stripe = getStripe()
+  const latest = await stripe.subscriptions.retrieve(subId)
+  await db
+    .update(subscriptions)
+    .set({
+      status: mapStripeStatus(latest.status),
+      currentPeriodEnd: subscriptionPeriodEnd(latest),
+      cancelAtPeriodEnd: latest.cancel_at_period_end ?? false,
+      updatedAt: new Date(),
+    })
+    .where(eq(subscriptions.stripeSubscriptionId, subId))
+}
+
 async function handleEvent(db: ReturnType<typeof getDb>, event: Stripe.Event) {
   switch (event.type) {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const sub = event.data.object as Stripe.Subscription
-      const status = event.type === 'customer.subscription.deleted' ? 'canceled' : sub.status
-      const periodEnd = subscriptionPeriodEnd(sub)
-      await db
-        .update(subscriptions)
-        .set({
-          status: status as typeof subscriptions.$inferInsert.status,
-          currentPeriodEnd: periodEnd,
-          cancelAtPeriodEnd: sub.cancel_at_period_end ?? false,
-          updatedAt: new Date(),
-        })
-        .where(eq(subscriptions.stripeSubscriptionId, sub.id))
+      await syncSubscriptionFromStripe(db, sub.id)
       break
     }
-    case 'invoice.paid': {
-      const invoice = event.data.object as Stripe.Invoice
-      const subId = invoiceSubscriptionId(invoice)
-      if (subId) {
-        await db
-          .update(subscriptions)
-          .set({ status: 'active', updatedAt: new Date() })
-          .where(eq(subscriptions.stripeSubscriptionId, subId))
-      }
-      break
-    }
+    case 'invoice.paid':
     case 'invoice.payment_failed':
     case 'invoice.payment_action_required': {
-      // 支払い失敗 or 追加認証(3Dセキュア/SCA)が必要 → past_due にして利用をゲート。
-      // 顧客が対応(再決済/認証)し invoice.paid が来れば active に戻る。
       const invoice = event.data.object as Stripe.Invoice
       const subId = invoiceSubscriptionId(invoice)
       if (subId) {
-        await db
-          .update(subscriptions)
-          .set({ status: 'past_due', updatedAt: new Date() })
-          .where(eq(subscriptions.stripeSubscriptionId, subId))
+        await syncSubscriptionFromStripe(db, subId)
       }
       break
     }

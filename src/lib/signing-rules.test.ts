@@ -8,6 +8,8 @@ import {
   isSubscriptionActive,
   pctToPdfRect,
   nextLockState,
+  isValidPngDataUrl,
+  validateFieldValues,
 } from './signing-rules'
 
 describe('accessCodeMatches', () => {
@@ -121,5 +123,81 @@ describe('nextLockState', () => {
   })
   it('閾値到達でロック+カウントリセット', () => {
     expect(nextLockState(4, 5)).toEqual({ attempts: 0, locked: true })
+  })
+})
+
+describe('isValidPngDataUrl', () => {
+  // 1x1透明PNG
+  const VALID = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  it('正当なPNG data URLを受理', () => {
+    expect(isValidPngDataUrl(VALID)).toBe(true)
+  })
+  it('null/空/別MIME/偽base64を拒否', () => {
+    expect(isValidPngDataUrl(null)).toBe(false)
+    expect(isValidPngDataUrl('')).toBe(false)
+    expect(isValidPngDataUrl('data:image/jpeg;base64,/9j/4AAQ')).toBe(false)
+    expect(isValidPngDataUrl('data:image/png;base64,')).toBe(false)
+    // prefixだけ正しくて中身がPNGでない
+    expect(isValidPngDataUrl('data:image/png;base64,aGVsbG8=')).toBe(false)
+  })
+})
+
+describe('validateFieldValues', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  const fields = [
+    { id: 'f1', fieldType: 'signature', required: true },
+    { id: 'f2', fieldType: 'text', required: true },
+    { id: 'f3', fieldType: 'date', required: false },
+    { id: 'f4', fieldType: 'stamp', required: false },
+  ]
+  it('正常な記入を受理', () => {
+    expect(validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', imageData: PNG },
+      { fieldId: 'f2', type: 'text', value: '奥村' },
+      { fieldId: 'f3', type: 'date', value: '2026/07/17' },
+      { fieldId: 'f4', type: 'stamp', imageData: PNG },
+    ])).toEqual({ ok: true })
+  })
+  it('他人の欄/存在しない欄を拒否', () => {
+    const r = validateFieldValues(fields, [{ fieldId: 'zzz', type: 'draw', imageData: PNG }])
+    expect(r).toMatchObject({ ok: false, code: 'INVALID_FIELD' })
+  })
+  it('同一欄の重複記入を拒否', () => {
+    const r = validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', imageData: PNG },
+      { fieldId: 'f1', type: 'draw', imageData: PNG },
+      { fieldId: 'f2', type: 'text', value: 'x' },
+    ])
+    expect(r).toMatchObject({ ok: false, code: 'DUPLICATE_FIELD' })
+  })
+  it('署名欄にvalueだけ送る空振り署名を拒否(タイプ不整合)', () => {
+    const r = validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'text', value: 'x' },
+      { fieldId: 'f2', type: 'text', value: 'x' },
+    ])
+    expect(r).toMatchObject({ ok: false, code: 'TYPE_MISMATCH' })
+  })
+  it('署名欄にtype=drawで画像なし/偽画像を拒否', () => {
+    expect(validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', value: 'x' },
+      { fieldId: 'f2', type: 'text', value: 'x' },
+    ])).toMatchObject({ ok: false, code: 'INVALID_IMAGE' })
+    expect(validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', imageData: 'data:image/png;base64,aGVsbG8=' },
+      { fieldId: 'f2', type: 'text', value: 'x' },
+    ])).toMatchObject({ ok: false, code: 'INVALID_IMAGE' })
+  })
+  it('テキスト欄の空白のみを拒否', () => {
+    const r = validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', imageData: PNG },
+      { fieldId: 'f2', type: 'text', value: '   ' },
+    ])
+    expect(r).toMatchObject({ ok: false, code: 'EMPTY_VALUE' })
+  })
+  it('必須欄の未記入を拒否', () => {
+    const r = validateFieldValues(fields, [
+      { fieldId: 'f1', type: 'draw', imageData: PNG },
+    ])
+    expect(r).toMatchObject({ ok: false, code: 'MISSING_REQUIRED' })
   })
 })

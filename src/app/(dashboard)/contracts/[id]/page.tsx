@@ -103,6 +103,10 @@ export default function ContractDetailPage({
     onSuccess: () => utils.contracts.getById.invalidate({ id }),
   })
 
+  const regenerateSignedPdf = trpc.contracts.regenerateSignedPdf.useMutation({
+    onSuccess: () => utils.contracts.getById.invalidate({ id }),
+  })
+
   const addSigner = trpc.contracts.addSigner.useMutation({
     onSuccess: () => {
       utils.contracts.getById.invalidate({ id })
@@ -198,12 +202,22 @@ export default function ContractDetailPage({
               </AlertDialog>
             </>
           )}
-          {c.status === 'completed' && (c.signedPdfUrl || c.pdfSignedUrl) && (
-            <a href={c.signedPdfUrl ?? c.pdfSignedUrl ?? undefined} target="_blank" rel="noopener noreferrer">
-              <Button size="sm">
-                {c.signedPdfUrl ? '署名済みPDFをダウンロード' : 'PDFをダウンロード'}
+          {c.status === 'completed' && (
+            c.signedPdfUrl ? (
+              <a href={c.signedPdfUrl} target="_blank" rel="noopener noreferrer">
+                <Button size="sm">署名済みPDFをダウンロード</Button>
+              </a>
+            ) : (
+              // 未署名の原本を締結版と誤認させないため、原本へのフォールバックはしない
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={regenerateSignedPdf.isPending}
+                onClick={() => regenerateSignedPdf.mutate({ id })}
+              >
+                {regenerateSignedPdf.isPending ? '生成中...' : '署名済みPDFを再生成'}
               </Button>
-            </a>
+            )
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

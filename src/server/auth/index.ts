@@ -26,8 +26,8 @@ export async function createSupabaseServer() {
 }
 
 export async function getCurrentUser() {
-  // Dev bypass
-  if (process.env.DEV_BYPASS_AUTH === '1') {
+  // Dev bypass（本番では環境変数が残っていても無効。proxy側と同じ条件を認証関数自身でも強制する）
+  if (process.env.DEV_BYPASS_AUTH === '1' && process.env.NODE_ENV !== 'production') {
     const db = getDb()
     const devEmail = 'dev@oku-sign.local'
     const existing = await db.select().from(users).where(eq(users.email, devEmail)).limit(1)

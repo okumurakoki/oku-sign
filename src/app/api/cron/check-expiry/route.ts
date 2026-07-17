@@ -35,12 +35,16 @@ export async function GET(request: NextRequest) {
   let processed = 0
 
   for (const contract of expiredContracts) {
-    // 状態更新と監査ログは原子的に（片方だけ成功する不整合を防ぐ）
-    await db.transaction(async (tx) => {
-      await tx
+    // 状態更新と監査ログは原子的に（片方だけ成功する不整合を防ぐ）。
+    // 条件付きUPDATEで処理権をclaimし、並行cronや署名との競合時は
+    // claimが取れた実行だけがaudit・通知メールを行う
+    const claimed = await db.transaction(async (tx) => {
+      const rows = await tx
         .update(contracts)
         .set({ status: 'expired', updatedAt: now })
         .where(and(eq(contracts.id, contract.id), inArray(contracts.status, ['sent', 'signing'])))
+        .returning({ id: contracts.id })
+      if (rows.length === 0) return false
 
       await tx.insert(auditLogs).values({
         id: ulid(),
@@ -50,7 +54,9 @@ export async function GET(request: NextRequest) {
         detail: '署名期限を過ぎたため期限切れとなりました',
         createdAt: now,
       })
+      return true
     })
+    if (!claimed) continue
 
     // 送信者へ通知
     const [sender] = await db

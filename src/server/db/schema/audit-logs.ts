@@ -8,5 +8,6 @@ export const auditLogs = pgTable('audit_logs', {
   actorEmail: text('actor_email').notNull(),
   detail: text('detail'),
   ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

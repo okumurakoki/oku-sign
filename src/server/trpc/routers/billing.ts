@@ -1,10 +1,12 @@
 import { protectedProcedure, router } from '@/server/trpc'
 import { TRPCError } from '@trpc/server'
 import { subscriptions } from '@/server/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { z } from 'zod/v4'
 import { getStripe, ensurePartnerProductId, PARTNER_PLANS } from '@/server/stripe'
+import type Stripe from 'stripe'
+import { reportError } from '@/server/report-error'
 import type { Context } from '@/server/trpc/context'
 
 const ACTIVE_STATUSES = ['active', 'trialing']
@@ -44,8 +46,16 @@ export const billingRouter = router({
     const selectedPlan = PARTNER_PLANS[input.plan]
     const stripe = getStripe()
 
-    // 既存サブスクの確認
-    const [existing] = await ctx.db
+    // ユーザー単位でトランザクションスコープのadvisory lockを取り、作成処理全体を
+    // 直列化する。idempotency keyだけでは「同プラン側がretrieve再利用・異プラン側が
+    // cancel+create」という別経路同士の並行を排他できず、二重課金余地が残るため。
+    // トランザクション内にStripe API呼び出しを含むのは意図的（数秒・同一ユーザーの
+    // 並行だけが待つ・接続はmax:3で影響は局所的）。
+    return await ctx.db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`billing:${ctx.user.id}`}))`)
+
+    // 既存サブスクの確認（ロック取得後に読む=直前の並行処理の結果が見える）
+    const [existing] = await tx
       .select()
       .from(subscriptions)
       .where(eq(subscriptions.userId, ctx.user.id))
@@ -71,30 +81,83 @@ export const billingRouter = router({
 
     const productId = await ensurePartnerProductId()
 
-    // 既存の未完了サブスクがあれば再利用、なければ作成
-    const subscription = await stripe.subscriptions.create(
-      {
-        customer: customerId,
-        items: [{
-          price_data: {
-            currency: selectedPlan.currency,
-            product: productId,
-            unit_amount: selectedPlan.amount,
-            recurring: { interval: selectedPlan.interval },
-          },
-        }],
-        payment_behavior: 'default_incomplete',
-        payment_settings: { save_default_payment_method: 'on_subscription' },
-        expand: ['latest_invoice.confirmation_secret'],
-        metadata: { userId: ctx.user.id },
-      },
-      { idempotencyKey: `subscription-create-${ctx.user.id}-${existing?.id ?? 'new'}` },
-    )
+    // 既存の未完了サブスクをStripeから取得して再利用する。再試行のたびに
+    // 新しいSubscriptionを作ると、古いincomplete subが宙に浮き、複数タブで
+    // それぞれ確定されると二重課金になる（DBは最後の1本しか追跡しない）。
+    let subscription: Stripe.Subscription | null = null
+    if (existing?.stripeSubscriptionId) {
+      try {
+        const prior = await stripe.subscriptions.retrieve(existing.stripeSubscriptionId, {
+          expand: ['latest_invoice.confirmation_secret'],
+        })
+        if (ACTIVE_STATUSES.includes(prior.status)) {
+          // webhook遅延でDBが未同期のケース。二重作成せずDBを収束させて終了。
+          // 直後にthrowするためtxではなくctx.db（別接続）で書き、ロールバックさせない
+          await ctx.db
+            .update(subscriptions)
+            .set({ status: prior.status as typeof subscriptions.$inferInsert.status, updatedAt: new Date() })
+            .where(eq(subscriptions.userId, ctx.user.id))
+          throw new TRPCError({ code: 'BAD_REQUEST', message: '既に有効なサブスクリプションがあります' })
+        }
+        if (prior.status === 'past_due' || prior.status === 'unpaid') {
+          // 未払い中に新規subを重ねると二重課金になる。既存の支払いを直してもらう
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'お支払いに問題があります。カード情報を更新してください' })
+        }
+        if (prior.status === 'incomplete') {
+          const priorInterval = prior.items.data[0]?.price.recurring?.interval
+          if (priorInterval === selectedPlan.interval) {
+            subscription = prior // 同プランの未完了があればそのまま再利用
+          } else {
+            // プラン変更の再試行: 古い未完了subを回収してから新規作成
+            await stripe.subscriptions.cancel(prior.id)
+          }
+        }
+        // incomplete_expired / canceled は回収済み扱いでそのまま新規作成へ
+      } catch (err) {
+        if (err instanceof TRPCError) throw err
+        // fail-closed: Stripe一時障害やタイムアウトで既存subの状態が不明のまま
+        // 新規作成へ進むと、既存がactiveだった場合に二重課金になる。
+        // 明示的な resource_missing（削除済み）だけを新規作成にフォールバックする
+        const isMissing = typeof err === 'object' && err !== null &&
+          (err as { code?: string }).code === 'resource_missing'
+        if (!isMissing) {
+          reportError(err, { scope: 'billing:retrievePriorSubscription', userId: ctx.user.id })
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: '決済情報の確認に失敗しました。時間をおいて再度お試しください',
+          })
+        }
+      }
+    }
+
+    if (!subscription) {
+      subscription = await stripe.subscriptions.create(
+        {
+          customer: customerId,
+          items: [{
+            price_data: {
+              currency: selectedPlan.currency,
+              product: productId,
+              unit_amount: selectedPlan.amount,
+              recurring: { interval: selectedPlan.interval },
+            },
+          }],
+          payment_behavior: 'default_incomplete',
+          payment_settings: { save_default_payment_method: 'on_subscription' },
+          expand: ['latest_invoice.confirmation_secret'],
+          metadata: { userId: ctx.user.id },
+        },
+        // keyにplanを含めない: 同じ世代(直前のsub id)からの作成は1本に固定する。
+        // 月額/年額を並行要求しても、後着は同key・異パラメータでStripeが
+        // idempotency_errorを返すため、2本のsubが同時に生まれることはない
+        { idempotencyKey: `subscription-create-${ctx.user.id}-${existing?.stripeSubscriptionId ?? 'first'}` },
+      )
+    }
 
     // DBに反映（upsert）
     const now = new Date()
     if (existing) {
-      await ctx.db
+      await tx
         .update(subscriptions)
         .set({
           stripeCustomerId: customerId,
@@ -105,7 +168,7 @@ export const billingRouter = router({
         })
         .where(eq(subscriptions.userId, ctx.user.id))
     } else {
-      await ctx.db.insert(subscriptions).values({
+      await tx.insert(subscriptions).values({
         id: ulid(),
         userId: ctx.user.id,
         stripeCustomerId: customerId,
@@ -125,6 +188,7 @@ export const billingRouter = router({
     }
 
     return { clientSecret, subscriptionId: subscription.id }
+    })
   }),
 
   // 解約（期末で停止）
