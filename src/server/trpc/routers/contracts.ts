@@ -589,16 +589,19 @@ export const contractsRouter = router({
       if (contract.status !== 'draft') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '送信済みの書類は削除できません（記録保持のため）' })
       }
-      await ctx.db
+      const deleted = await ctx.db
         .delete(contracts)
         .where(and(eq(contracts.id, input.id), eq(contracts.createdBy, ctx.user.id)))
+        .returning({ id: contracts.id })
 
       // Storageの契約書PDF実体も削除（DB行だけ消すと機密文書が永続残置される）。
-      // DB削除成立後のベストエフォート: 失敗してもDB削除は覆さずSentryに記録
-      try {
-        await removePdfObjects([`contracts/${input.id}/original.pdf`])
-      } catch (err) {
-        reportError(err, { scope: 'contracts.delete:storage', contractId: input.id })
+      // DB削除が実際に成立した場合のみ・ベストエフォート: 失敗してもDB削除は覆さずSentryに記録
+      if (deleted.length > 0) {
+        try {
+          await removePdfObjects([`contracts/${input.id}/original.pdf`])
+        } catch (err) {
+          reportError(err, { scope: 'contracts.delete:storage', contractId: input.id })
+        }
       }
     }),
 
