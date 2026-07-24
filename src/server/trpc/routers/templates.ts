@@ -3,7 +3,8 @@ import { templates } from '@/server/db/schema'
 import { and, eq, desc, sql } from 'drizzle-orm'
 import { z } from 'zod/v4'
 import { ulid } from 'ulid'
-import { getSignedUrl } from '@/server/storage'
+import { getSignedUrl, removePdfObjects, downloadPdf, uploadPdfToPath } from '@/server/storage'
+import { reportError } from '@/server/report-error'
 
 export const templatesRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -86,11 +87,24 @@ export const templatesRouter = router({
       if (!original) throw new Error('テンプレートが見つかりません')
 
       const id = ulid()
+      // PDF実体も新パスへ独立コピーする。pdfUrlを共有すると、片方の削除で
+      // Storage実体が消え、もう片方のテンプレが壊れる。
+      // コピー失敗時はPDF欠けの複製を黙って作らず、複製自体を失敗させる
+      let pdfUrl: string | null = null
+      if (original.pdfUrl) {
+        try {
+          const buf = await downloadPdf(original.pdfUrl)
+          pdfUrl = await uploadPdfToPath(buf, `templates/${id}/original.pdf`)
+        } catch (err) {
+          reportError(err, { scope: 'templates.duplicate:copyPdf', templateId: original.id })
+          throw new Error('テンプレートPDFのコピーに失敗しました。時間をおいて再度お試しください')
+        }
+      }
       await ctx.db.insert(templates).values({
         id,
         title: `${original.title}（コピー）`,
         description: original.description,
-        pdfUrl: original.pdfUrl,
+        pdfUrl,
         pdfName: original.pdfName,
         pdfSize: original.pdfSize,
         defaultMessage: original.defaultMessage,
@@ -111,8 +125,19 @@ export const templatesRouter = router({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await ctx.db
+      const deleted = await ctx.db
         .delete(templates)
         .where(and(eq(templates.id, input.id), eq(templates.createdBy, ctx.user.id)))
+        .returning({ id: templates.id })
+
+      // StorageのテンプレPDF実体も削除（DB行だけ消すと文書が永続残置される）。
+      // DB削除成立後のベストエフォート: 失敗してもDB削除は覆さずSentryに記録
+      if (deleted.length > 0) {
+        try {
+          await removePdfObjects([`templates/${input.id}/original.pdf`])
+        } catch (err) {
+          reportError(err, { scope: 'templates.delete:storage', templateId: input.id })
+        }
+      }
     }),
 })
