@@ -6,7 +6,7 @@ import { z } from 'zod/v4'
 import { ulid } from 'ulid'
 import { sendEmail } from '@/server/email'
 import { signingRequestEmail, reminderEmail } from '@/server/email/templates'
-import { getSignedUrl, downloadPdf, uploadPdfToPath } from '@/server/storage'
+import { getSignedUrl, downloadPdf, uploadPdfToPath, removePdfObjects } from '@/server/storage'
 import { hasActiveSubscription } from './billing'
 import { renderAndStoreSignedPdf } from '@/server/pdf/store-signed-pdf'
 import { reportError } from '@/server/report-error'
@@ -592,6 +592,14 @@ export const contractsRouter = router({
       await ctx.db
         .delete(contracts)
         .where(and(eq(contracts.id, input.id), eq(contracts.createdBy, ctx.user.id)))
+
+      // Storageの契約書PDF実体も削除（DB行だけ消すと機密文書が永続残置される）。
+      // DB削除成立後のベストエフォート: 失敗してもDB削除は覆さずSentryに記録
+      try {
+        await removePdfObjects([`contracts/${input.id}/original.pdf`])
+      } catch (err) {
+        reportError(err, { scope: 'contracts.delete:storage', contractId: input.id })
+      }
     }),
 
   bulkDelete: protectedProcedure
@@ -599,13 +607,22 @@ export const contractsRouter = router({
     .mutation(async ({ ctx, input }) => {
       if (input.ids.length === 0) return
       // 下書きのみ削除（送信以降は保持）。対象外は黙ってスキップする。
-      await ctx.db
+      const deleted = await ctx.db
         .delete(contracts)
         .where(and(
           inArray(contracts.id, input.ids),
           eq(contracts.createdBy, ctx.user.id),
           eq(contracts.status, 'draft'),
         ))
+        .returning({ id: contracts.id })
+
+      if (deleted.length > 0) {
+        try {
+          await removePdfObjects(deleted.map((d) => `contracts/${d.id}/original.pdf`))
+        } catch (err) {
+          reportError(err, { scope: 'contracts.bulkDelete:storage', count: deleted.length })
+        }
+      }
     }),
 
   addSigner: protectedProcedure

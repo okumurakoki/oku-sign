@@ -46,6 +46,15 @@ export async function downloadPdf(path: string): Promise<Buffer> {
 }
 
 // 有効期限付きの署名URLを生成（既定1時間）。
+// 契約/テンプレ削除時にStorageのPDF実体も削除する（DB行だけ消すと機密文書が
+// ストレージに永続残置される）。存在しないパスが混ざってもエラーにならない。
+export async function removePdfObjects(paths: string[]) {
+  if (paths.length === 0) return
+  const supabase = getStorageClient()
+  const { error } = await supabase.storage.from(BUCKET).remove(paths)
+  if (error) throw new Error(`Remove failed: ${error.message}`)
+}
+
 export async function getSignedUrl(path: string, expiresIn = 3600) {
   const supabase = getStorageClient()
   const { data, error } = await supabase.storage
